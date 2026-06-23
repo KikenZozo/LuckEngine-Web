@@ -1,0 +1,14 @@
+{
+  "name": "luckengine-web",
+  "version": "3.16.0",
+  "type": "module",
+  "description": "JavaScript/Web implementation of LuckSystem/LuckEngine for AIR resources.",
+  "scripts": {
+    "test": "node ./src/tests/selftest.js",
+    "inspect:pak": "node ./src/tests/inspectPak.js ./game/AIR/SCRIPT.PAK",
+    "extract:script8": "node ./src/tests/extractScriptEntry.js 8 ./game/AIR/SCRIPT.PAK",
+    "parse:script8": "node ./src/tests/testParseScript.js ./scripts/8.bin",
+    "serve": "node --version >/dev/null && python3 -m http.server 8080"
+  },
+  "license": "UNLICENSED"
+}

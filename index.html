@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AIR — LuckEngine-Web</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    #game { display: block; width: 100vw; height: 100vh; }
+
+    #langbar {
+      position: fixed; top: 8px; right: 8px; display: flex; gap: 4px;
+      font-family: system-ui, sans-serif; z-index: 5; opacity: .85;
+    }
+    #langbar button {
+      background: rgba(0,0,0,.55); color: #eee; border: 1px solid #555;
+      border-radius: 4px; padding: 3px 9px; cursor: pointer; font-size: 13px;
+    }
+    #langbar button.active { background: #b8863b; color: #fff; border-color: #b8863b; }
+
+    #import {
+      position: fixed; inset: 0; display: none; place-items: center;
+      background: #111; color: #eee; font-family: system-ui, sans-serif;
+      text-align: center; padding: 24px; box-sizing: border-box; z-index: 10;
+    }
+    #import.show { display: grid; }
+    #import .box { max-width: 720px; }
+    #import h2 { margin: 0 0 8px; }
+    #import p { opacity: .8; line-height: 1.5; }
+    #dropzone {
+      margin: 18px auto; padding: 40px 24px; border: 2px dashed #666;
+      border-radius: 12px; cursor: pointer; transition: .15s; max-width: 560px;
+    }
+    #dropzone.over { border-color: #b8863b; background: rgba(184,134,59,.12); }
+    #import .actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    #import button, #import label.btn {
+      font: inherit; padding: 8px 16px; cursor: pointer; border-radius: 6px;
+      border: 1px solid #666; background: #222; color: #eee;
+    }
+    #import code { background: #222; padding: 2px 6px; border-radius: 4px; }
+    #import-status { margin-top: 14px; min-height: 1.2em; color: #ffd479; }
+    #reset { margin-top: 18px; font-size: 13px; opacity: .6; cursor: pointer; text-decoration: underline; }
+    input[type=file] { display: none; }
+    #menubtn { position: fixed; top: 8px; left: 8px; z-index: 6; background: rgba(0,0,0,.55);
+      color:#eee; border:1px solid #555; border-radius:4px; padding:4px 10px; cursor:pointer;
+      font-family: system-ui, sans-serif; font-size:15px; }
+    .ctrlbtn { background: rgba(0,0,0,.55); color:#eee; border:1px solid #555; border-radius:4px;
+      padding:4px 12px; cursor:pointer; font-family: system-ui, sans-serif; font-size:13px; }
+    .ctrlbtn:hover { background: rgba(0,0,0,.75); }
+    .ctrlbtn.active { background:#b8863b; color:#fff; border-color:#b8863b; }
+    .title-btn { background:none; border:none; cursor:pointer; font-size:30px; font-weight:600;
+      color:rgba(110,120,140,.65); letter-spacing:1px; padding:2px 4px; transition:color .12s, text-shadow .12s;
+      font-family:'Trebuchet MS', system-ui, sans-serif; }
+    .title-btn:hover { color:#2f50c8; text-shadow:0 0 8px rgba(90,130,255,.5); }
+    .title-btn:disabled { color:rgba(110,120,140,.30); cursor:default; text-shadow:none; }
+    #menu { position: fixed; inset:0; display:none; background: rgba(10,10,14,.96); z-index:9;
+      color:#eee; font-family: system-ui, sans-serif; flex-direction:column; padding:24px; box-sizing:border-box; }
+    #menu.show { display:flex; }
+    #menu h2 { margin:0 0 12px; }
+    #entrysearch { font:inherit; padding:8px 12px; border-radius:6px; border:1px solid #555;
+      background:#1a1a22; color:#eee; max-width:420px; }
+    #entrylist { margin-top:14px; overflow:auto; flex:1; display:grid;
+      grid-template-columns: repeat(auto-fill,minmax(180px,1fr)); gap:8px; align-content:start; }
+    #entrylist button { font:inherit; text-align:left; padding:8px 10px; border-radius:6px;
+      border:1px solid #444; background:#1a1a22; color:#eee; cursor:pointer; }
+    #entrylist button:hover { border-color:#b8863b; background:#241d12; }
+  </style>
+</head>
+<body>
+  <!-- Menu Save / Load : grille de slots avec vignettes (style AIR) -->
+  <div id="savemenu" style="display:none; position:absolute; inset:0; z-index:75; background:rgba(245,245,248,.97); font-family:'Trebuchet MS', system-ui, sans-serif; box-sizing:border-box; padding:30px 40px; overflow:auto;">
+    <div style="display:flex; align-items:center; gap:20px; margin-bottom:18px;">
+      <h2 id="savemenu-title" style="margin:0; color:#2f3a52; font-size:26px; letter-spacing:1px;">SAUVEGARDER</h2>
+      <button id="savemenu-close" style="margin-left:auto; background:none; border:1px solid #8a93a8; color:#39435c; border-radius:6px; padding:6px 16px; cursor:pointer; font-size:15px;">Retour</button>
+    </div>
+    <div id="save-grid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:16px;"></div>
+  </div>
+
+  <canvas id="game" width="1280" height="720"></canvas>
+
+  <!-- Écran titre (style AIR) : fond title1a + boutons NEW GAME / LOAD / … -->
+  <div id="title" style="display:none; position:absolute; inset:0; z-index:70; background:#f2f2f4;">
+    <img id="title-bg" alt="" style="position:absolute; left:0; top:0; width:100%; height:100%; object-fit:contain;" />
+    <div id="title-menu" style="position:absolute; left:0; right:0; bottom:11%; display:flex; justify-content:center; gap:42px; align-items:center; font-family:'Trebuchet MS', system-ui, sans-serif;">
+      <button class="title-btn" data-act="new">NEW GAME</button>
+      <button class="title-btn" data-act="load">LOAD</button>
+      <button class="title-btn" data-act="options">OPTIONS</button>
+      <button class="title-btn" data-act="manual">MANUAL</button>
+      <button class="title-btn" data-act="exit">EXIT</button>
+      <span id="title-arrow" style="color:#3a5bd0; font-size:32px;">&#9654;</span>
+    </div>
+  </div>
+
+  <!-- Bannière discrète : proposée si le jeu tourne mais sans vidéos importées -->
+  <div id="vidbanner" style="display:none; position:absolute; left:50%; top:8px; transform:translateX(-50%); z-index:60; background:rgba(20,20,28,.92); color:#eee; padding:8px 14px; border-radius:8px; font-size:13px; box-shadow:0 2px 10px rgba(0,0,0,.4);">
+    <span>Vidéos d'opening non trouvées.</span>
+    <label style="text-decoration:underline; cursor:pointer; margin-left:8px;">Ajouter les vidéos
+      <input id="addvid" type="file" accept=".webm,.mp4,.ogv" multiple style="display:none;" />
+    </label>
+    <span id="vidclose" style="margin-left:10px; cursor:pointer; opacity:.6;">✕</span>
+  </div>
+
+  <button id="menubtn">☰ Chapitres</button>
+  <div id="langbar">
+    <button data-lang="jp">日本語</button>
+    <button data-lang="en">Français</button>
+    <button data-lang="zh">中文</button>
+  </div>
+
+  <!-- Barre de contrôle (provisoire, sera remplacée par les vraies images d'AIR) -->
+  <div id="ctrlbar" style="position:absolute; right:10px; bottom:10px; z-index:40; display:flex; gap:6px; font-size:13px;">
+    <button class="ctrlbtn" id="btn-auto">Auto</button>
+    <button class="ctrlbtn" id="btn-skip">Skip</button>
+    <button class="ctrlbtn" id="btn-voice">Voice</button>
+    <button class="ctrlbtn" id="btn-sysmenu">Menu</button>
+  </div>
+
+  <div id="import">
+    <div class="box">
+      <h2>Importe ton jeu AIR</h2>
+      <p>
+        Dépose ton dossier de jeu (ou tes fichiers <code>.PAK</code>). Au minimum
+        <code>SCRIPT.PAK</code> ; ajoute <code>BGCG.PAK</code> et
+        <code>CHARCG.PAK</code> pour les images. Tes fichiers restent dans ton
+        navigateur — rien n'est envoyé sur un serveur. La prochaine fois, le jeu
+        démarrera tout seul.
+      </p>
+
+      <div id="dropzone">
+        Glisse ici ton dossier de jeu ou tes <code>.PAK</code>
+      </div>
+
+      <div class="actions">
+        <label class="btn">Choisir un dossier
+          <input id="dir" type="file" webkitdirectory directory multiple />
+        </label>
+        <label class="btn">Choisir des fichiers (.PAK / vidéos)
+          <input id="files" type="file" accept=".pak,.PAK,.webm,.mp4,.ogv" multiple />
+        </label>
+      </div>
+
+      <div id="import-status"></div>
+      <div id="reset">Réinitialiser le jeu importé</div>
+    </div>
+  </div>
+
+  <div id="menu">
+    <h2>Choisir un point de départ (script)</h2>
+    <input id="entrysearch" type="text" placeholder="filtrer… (ex: seen, dream)" />
+    <div id="entrylist"></div>
+  </div>
+
+  <script type="module" src="./src/app/boot.js"></script>
+</body>
+</html>

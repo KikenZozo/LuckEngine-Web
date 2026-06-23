@@ -1,0 +1,81 @@
+﻿# Dépendances / build
+node_modules/
+dist/
+build/
+.cache/
+.vite/
+.next/
+out/
+
+# Logs
+*.log
+
+# OS / éditeurs
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Archives
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+
+# Fichiers originaux du jeu / propriétaires
+*.pak
+*.PAK
+*.arc
+*.dat
+*.bin
+*.exe
+*.dll
+*.iso
+*.mdf
+*.mds
+*.cue
+*.ccd
+*.img
+*.sub
+
+# Dossiers de jeu extraits
+game/
+games/
+assets/game/
+public/game/
+public/assets/game/
+public/assets/air/
+public/assets/AIR/
+Extracted_CG/
+Extracted_BGM/
+Extracted_SE/
+Extracted_VOICE/
+CG/
+BGM/
+SE/
+VOICE/
+voice/
+voices/
+bgm/
+sound/
+sounds/
+
+# Médias extraits du jeu
+*.ogg
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.opus
+*.mp4
+*.webm
+*.avi
+*.mkv
+
+# Sauvegardes locales
+saves/
+save/
+local-saves/
+*.sav
+*.save

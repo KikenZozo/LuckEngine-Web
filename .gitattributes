@@ -1,0 +1,22 @@
+# Normalise les fins de ligne : évite les diffs parasites CRLF/LF sous Windows.
+# git stocke en LF dans le dépôt et restitue selon la plateforme.
+* text=auto eol=lf
+
+# Fichiers binaires : jamais de conversion de fin de ligne.
+*.pak binary
+*.PAK binary
+*.cz binary
+*.cz0 binary
+*.cz1 binary
+*.cz2 binary
+*.cz3 binary
+*.cz4 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webm binary
+*.mp4 binary
+*.ogv binary
+*.ogg binary
+*.wav binary
+*.zip binary
