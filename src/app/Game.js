@@ -1,0 +1,943 @@
+// ============================================================================
+// LuckEngine-Web — src/app/Game.js
+// ----------------------------------------------------------------------------
+// Colle le pipeline : ArrayBuffer(.PAK) -> PakReader -> parseScript -> AIRVM,
+// pilote l'affichage via CanvasRenderer, et branche un évaluateur d'expressions
+// + un store de variables (les SELECT y écrivent l'index choisi, les IFN les
+// relisent). Conçu pour le navigateur (avance/choix au clic).
+// ============================================================================
+
+import { PakReader } from "../pak/PakReader.js";
+import { parseScript } from "../script/AIRParser.js";
+import { AIRVM } from "../vm/AIRVM.js";
+import { evalExprValue } from "../vm/ExprEval.js";
+import { decodeCZ } from "../image/czimage.js";
+import { spriteKey } from "./charcgKeys.js";
+import { AudioManager } from "../audio/AudioManager.js";
+
+export class Game {
+  constructor(renderer, opts = {}) {
+    this.renderer = renderer;
+    this.lang = opts.lang ?? "jp";
+    this.pak = null;
+    this.vars = {}; // store de variables AIR (#NNNN)
+    this._advance = null;
+    this._choose = null;
+    this.audio = new AudioManager();
+    this.movies = new Map(); // nom de fichier -> ArrayBuffer (vidéos opening…)
+  }
+
+  /** Enregistre une vidéo importée (AIR_OP_A.webm…) par son nom de fichier. */
+  addMovie(name, arrayBuffer) {
+    this.movies.set(name.toLowerCase(), arrayBuffer);
+  }
+
+  // Résout un nom de MOVIE du script ("AIR_OP_A") vers le bon fichier importé,
+  // en tenant compte de la langue (suffixe _EN / _ZC) et de l'extension.
+  _resolveMovie(baseName) {
+    const lang = this.lang;
+    const suffixes = lang === "en" ? ["_en", ""] : lang === "zh" ? ["_zc", ""] : ["", "_en"];
+    const exts = [".webm", ".mp4", ".ogv", ".ogg"];
+    const b = baseName.toLowerCase();
+    for (const sfx of suffixes) {
+      for (const ext of exts) {
+        const key = b + sfx + ext;
+        if (this.movies.has(key)) return this.movies.get(key);
+      }
+    }
+    // repli : n'importe quelle clé qui commence par le nom de base
+    for (const [k, v] of this.movies) {
+      if (k.startsWith(b)) return v;
+    }
+    return null;
+  }
+
+  /** Ajoute un PAK audio (voice.PAK / SE.PAK / BGM…). Appelable plusieurs fois. */
+  loadAudioPak(arrayBuffer, name = "") {
+    if (!this.audioPaks) this.audioPaks = [];
+    const pak = new PakReader(arrayBuffer);
+    this.audioPaks.push({ name, pak });
+    return pak.listEntries();
+  }
+
+  // ---- Résolution audio (mapping id-script -> entrée PAK) -------------------
+  // Mapping CONFIRMÉ par rétro-ingénierie des scripts AIR + noms d'entrées PAK :
+  //
+  //  SE  : l'opcode porte un u16 dont l'OCTET HAUT est l'index (0-based à partir
+  //        de 0x41=65). L'octet bas (0x00/0xFF/…) est un flag de volume/canal.
+  //          index = (u16 >> 8) - 65   ;  idPAK = idStart(SE.PAK) + index
+  //        u16==255 (0x00FF) => SE_STOP (octet haut nul -> pas un id).
+  //
+  //  BGM : l'octet HAUT est constant (0x86), l'OCTET BAS est l'index (0-based à
+  //        partir de 0xA1=161). u16 nul (BGM(0,…)) => arrêt/fondu.
+  //          index = (u16 & 0xFF) - 161 ;  idPAK = idStart(BGM.PAK) + index
+  //
+  //  VOICE : PAS d'opcode VOICE — la voix est portée par le u16 `unk` du MESSAGE,
+  //          qui est DIRECTEMENT l'id d'entrée VOICE.PAK (cf. _resolveVoice).
+  //
+  // On localise le PAK par son nom, puis on récupère l'entrée par son id PAK et
+  // on renvoie {id,bytes,from,fmt}. La détection de format se fait à la lecture.
+  _audioPakByName(...needles) {
+    if (!this.audioPaks) return null;
+    for (const needle of needles) {
+      // match strict sur le nom de fichier (sans l'extension), insensible à la casse
+      const up = needle.toUpperCase();
+      const hit = this.audioPaks.find((p) => {
+        const n = p.name.toUpperCase().replace(/\.PAK$/, "");
+        return n === up;
+      });
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  _resolveFromPak(pakEntry, idPak) {
+    if (!pakEntry) return null;
+    const { name, pak } = pakEntry;
+    const head = pak.headById(idPak, 16);
+    if (!head || head.length < 4) return null;
+    return { id: idPak, bytes: pak.getEntryById(idPak), from: `${name}#id${idPak}`, fmt: this.audio.inspect(head) };
+  }
+
+  /** SE : u16-script -> entrée SE.PAK. `loopFlag` = 3e arg de l'opcode (512=boucle). */
+  _resolveSe(u16val, loopFlag) {
+    if (!u16val) return null;
+    const hi = (u16val >> 8) & 0xff;
+    if (hi === 0) return { stop: true }; // 0x00FF & co : arrêt SE
+    const pk = this._audioPakByName("SE");
+    if (!pk) return null;
+    const idPak = pk.pak.header.idStart + (hi - 65);
+    const r = this._resolveFromPak(pk, idPak);
+    if (r) r.loop = (loopFlag === 512); // ambiances (higurashi/kaze/ame…) bouclent
+    return r;
+  }
+
+  /** BGM : u16-script -> entrée MUSIC.PAK (ou BGM.PAK). {…} | {stop:true} | null. */
+  _resolveBgm(u16val) {
+    if (!u16val) return { stop: true }; // BGM(0,…) : arrêt/fondu
+    const lo = u16val & 0xff;
+    const pk = this._audioPakByName("MUSIC", "BGM");
+    if (!pk) return null; // pas de MUSIC.PAK/BGM.PAK importé
+    const idPak = pk.pak.header.idStart + (lo - 161);
+    return this._resolveFromPak(pk, idPak);
+  }
+
+  /** VOICE : id = unk du MESSAGE (id direct VOICE.PAK). Cherche aussi VOICE1. */
+  _resolveVoice(idPak) {
+    if (!idPak) return null;
+    for (const nm of ["VOICE", "VOICE1"]) {
+      const pk = this._audioPakByName(nm);
+      if (!pk) continue;
+      const r = this._resolveFromPak(pk, idPak);
+      if (r) return r;
+    }
+    return null;
+  }
+
+  loadPakBuffer(arrayBuffer) {
+    this.pak = new PakReader(arrayBuffer);
+    return this.pak.listEntries();
+  }
+
+  /** Ajoute un PAK d'images (BGCG/CHARCG/EVENTCG…). Appelable plusieurs fois. */
+  loadImagePak(arrayBuffer, name = "") {
+    if (!this.imagePaks) this.imagePaks = [];
+    const pak = new PakReader(arrayBuffer);
+    this.imagePaks.push({ name, pak });
+    return pak.listEntries();
+  }
+
+  // Résout un imgId -> octets CZ : id global (IDStart+index) sur tous les CG
+  // paks, puis index en repli. Renvoie { bytes, from } ou null.
+  _imageBytes(imgId) {
+    if (!this.imagePaks || !this.imagePaks.length) return null;
+    const looksCZ = (b) => b && b.length > 2 && b[0] === 0x43 && b[1] === 0x5a;
+    // 1) par id global
+    for (const { name, pak } of this.imagePaks) {
+      try {
+        const b = pak.getEntryById(imgId);
+        if (looksCZ(b)) return { bytes: b, from: `${name}#id${imgId}`, name: pak.nameById(imgId), pakName: name };
+      } catch {}
+    }
+    // 2) par index (repli)
+    for (const { name, pak } of this.imagePaks) {
+      try {
+        const b = pak.getEntry(imgId);
+        if (looksCZ(b)) return { bytes: b, from: `${name}[${imgId}]`, name: null, pakName: name };
+      } catch {}
+    }
+    return null;
+  }
+
+  // Met à jour le médaillon de date (haut-gauche) à partir du mois+jour. Les
+  // médaillons OTHCG sont nommés jul_16..jul_31 et aug_01..aug_31 (universels,
+  // pas de variante de langue). Petits (≈192x200), positionnés en overlay.
+  async _updateDateBadge(month, day) {
+    const mm = month === 8 ? "aug" : month === 7 ? "jul" : null;
+    if (!mm) { return; } // hors juillet/août : pas de médaillon connu
+    const name = `${mm}_${String(day).padStart(2, "0")}`;
+    if (this._dateBadge && this._dateBadge.name === name) return; // déjà à jour
+    const found = this._imageBytesByName(name);
+    if (!found) { console.warn(`Médaillon date "${name}" introuvable`); return; }
+    const img = decodeCZ(found.bytes);
+    if (!img) return;
+    const bitmap = typeof createImageBitmap === "function"
+      ? await createImageBitmap(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height))
+      : { rgba: img.rgba, width: img.width, height: img.height };
+    this._dateBadge = {
+      name, bitmap,
+      ox: img.offsetX || 0, oy: img.offsetY || 0,
+      w: img.width, h: img.height,
+      canvasW: img.canvasW || 1280, canvasH: img.canvasH || 720,
+    };
+    console.log(`MÉDAILLON "${name}" [${img.width}x${img.height}] off(${img.offsetX || 0},${img.offsetY || 0})`);
+    this._redraw();
+  }
+
+  // Récupère les octets CZ d'une image par son NOM (toutes images PAK confondues).
+  _imageBytesByName(targetName) {
+    if (!this.imagePaks || !this.imagePaks.length) return null;
+    const looksCZ = (b) => b && b.length > 2 && b[0] === 0x43 && b[1] === 0x5a;
+    for (const { name, pak } of this.imagePaks) {
+      try {
+        const b = pak.getEntryByName(targetName);
+        if (looksCZ(b)) return { bytes: b, from: `${name}:${targetName}`, name: targetName, pakName: name };
+      } catch {}
+    }
+    return null;
+  }
+
+  // Décode une image d'UI (par nom) en bitmap utilisable par le renderer.  // `withInset` calcule en plus la zone non-transparente (utile pour caler le
+  // texte/le contenu dans une fenêtre qui a des marges transparentes).
+  async _decodeUiImage(name, withInset = false) {
+    const found = this._imageBytesByName(name);
+    if (!found) return null;
+    const img = decodeCZ(found.bytes);
+    if (!img) return null;
+    const bitmap = typeof createImageBitmap === "function"
+      ? await createImageBitmap(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height))
+      : { rgba: img.rgba, width: img.width, height: img.height };
+    const out = { bitmap, w: img.width, h: img.height, ox: img.offsetX || 0, oy: img.offsetY || 0 };
+    if (withInset) out.inset = this._opaqueBounds(img.rgba, img.width, img.height);
+    return out;
+  }
+
+  // Rend une image (par nom, ex "title1a") en data URL PNG, pour l'afficher dans
+  // un élément HTML (écran titre, etc.). Renvoie null si introuvable.
+  titleImageURL(name) {
+    const found = this._imageBytesByName(name);
+    if (!found) return null;
+    const img = decodeCZ(found.bytes);
+    if (!img) return null;
+    const cv = document.createElement("canvas");
+    cv.width = img.width; cv.height = img.height;
+    const ctx = cv.getContext("2d");
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height), 0, 0);
+    return cv.toDataURL("image/png");
+  }
+
+  // Bornes (en RATIO 0..1) de la zone non-transparente d'une image RGBA.
+  _opaqueBounds(rgba, w, h) {
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (rgba[(y * w + x) * 4 + 3] > 8) {
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < 0) return { x0: 0, y0: 0, x1: 1, y1: 1 };
+    return { x0: minX / w, y0: minY / h, x1: (maxX + 1) / w, y1: (maxY + 1) / h };
+  }
+
+  // Précharge les éléments d'UI d'AIR (fenêtre dialogue, choix) et les donne au
+  // renderer pour un rendu fidèle. Variante de langue pour les images textuelles.
+  async loadUiSkin() {
+    const sfx = this.lang === "en" ? "_en" : this.lang === "zh" ? "_zc" : "";
+    const skin = {};
+    skin.mwin = await this._decodeUiImage("MWIN0", true);    // fenêtre de dialogue (+inset)
+    skin.mwinCursor = await this._decodeUiImage("MWIN_CURSOR"); // curseur "continuer"
+    skin.selwin = await this._decodeUiImage("SELWIN");        // choix (normal)
+    skin.selwinSel = await this._decodeUiImage("SELWIN_s");   // choix (survol)
+    // SELWIN contient 3 bandes empilées (3 états du bouton). On n'en affiche
+    // qu'UNE : la bande du milieu (la barre bleue standard). On indique au
+    // renderer quelle tranche source découper (en ratio de hauteur).
+    const band = { y0: 78 / 222, y1: 144 / 222 }; // bande du milieu / hauteur image
+    if (skin.selwin) skin.selwin.band = band;
+    if (skin.selwinSel) skin.selwinSel.band = band;
+    this.uiSkin = skin;
+    if (this.renderer.setUiSkin) this.renderer.setUiSkin(skin);
+    const ok = Object.entries(skin).filter(([, v]) => v).map(([k]) => k);
+    console.log(`UI skin chargée : ${ok.join(", ") || "(aucune image trouvée)"}`);
+    return skin;
+  }
+
+  async _loadBackground(imgId) {
+    if (!this.imagePaks || !this.imagePaks.length) {
+      if (!this._warnedNoPak) {
+        console.warn("IMAGELOAD: aucun CG pak chargé — importe BGCG.PAK (et CHARCG.PAK…).");
+        this._warnedNoPak = true;
+      }
+      return;
+    }
+    const found = this._imageBytes(imgId);
+    if (!found) {
+      // ids hors plages CG = fonds SPÉCIAUX. Dans AIR, 65000 et 65001 sont des
+      // écrans NOIRS (endormissement "I close my eyes", transitions "this is
+      // goodbye", fondus entre scènes). Les fonds BLANCS qu'on voit ("My child…",
+      // "DREAM") sont de VRAIES images OTHCG (25190…), pas ces ids spéciaux.
+      // On rend donc NOIR, et surtout on REMPLACE le fond précédent (sinon le
+      // carton/décor d'avant reste collé).
+      this.currentBg = { solid: "#000000" };
+      this._currentBgId = imgId;
+      this.sprites = new Map();
+      this.eventExprs = [];
+      this._inEventCG = false;
+      this.bgOverlays = new Map();
+      this._currentBgNum = null;
+      console.log(`IMAGELOAD ${imgId} = fond noir spécial`);
+      return;
+    }
+    const img = decodeCZ(found.bytes);
+    if (!img) {
+      console.warn(`IMAGELOAD ${imgId} (${found.from}): CZ non décodé — format ` +
+        `"${String.fromCharCode(found.bytes[0], found.bytes[1], found.bytes[2])}" non géré ?`);
+      return;
+    }
+    console.log(`IMAGELOAD ${imgId} -> ${found.from} [${img.format} ${img.width}x${img.height}]`);
+    // Carton de date plein écran "day_MDD" (ex day_719 = 19 juil) : dans le vrai
+    // jeu il n'est PAS posé comme fond persistant — c'est le MÉDAILLON compact
+    // (jul_/aug_) qui s'affiche en haut à gauche. On met donc à jour le médaillon
+    // et on N'AFFICHE PAS le carton 1280x720 (sinon il masque toute la scène).
+    const dm = /^day_(\d)(\d\d)$/i.exec(found.name || "");
+    if (dm) {
+      this._updateDateBadge(+dm[1], +dm[2]);
+      return; // ne pas poser le carton comme fond
+    }
+    try {
+      const bitmap = typeof createImageBitmap === "function"
+        ? await createImageBitmap(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height))
+        : { rgba: img.rgba, width: img.width, height: img.height };
+      // EVENTCG : on distingue base et expression par la TAILLE (comme les BGCG),
+      // car le nommage n'est pas universel — certaines familles sont en lettres
+      // (fgka08a base / fgka08b expr) et d'autres en numéros (fgmp02 base /
+      // fgmp03,04,05 expr). Un EVENTCG PLEIN CADRE (≈1280x960) = base ; un PETIT
+      // EVENTCG = expression positionnée par son offset par-dessus la base.
+      const isEvent = (found.pakName || "").toUpperCase().includes("EVENTCG");
+      if (isEvent) {
+        const nm = (found.name || "").toLowerCase();
+        const isEventBase = img.width >= 1000 && img.height >= 700;
+        if (!isEventBase) {
+          // petit -> expression positionnée, EMPILÉE sur la base EVENTCG (plusieurs
+          // peuvent coexister : fgmp02 papier + fgmp03/04/05 détails = note complète).
+          this._addEventExpr({
+            bitmap, ox: img.offsetX || 0, oy: img.offsetY || 0,
+            w: img.width, h: img.height,
+            canvasW: img.canvasW || 1280, canvasH: img.canvasH || 960,
+          });
+          console.log(`EVENTCG expr "${nm}" [${img.width}x${img.height}] off(${img.offsetX || 0},${img.offsetY || 0}) -> empilée (${this.eventExprs.length})`);
+        } else {
+          // plein cadre -> base (nouvelle scène CG)
+          if (imgId !== this._currentBgId) { this.sprites = new Map(); this._currentBgId = imgId; }
+          this.currentBg = bitmap;
+          this.eventExprs = [];
+          this.bgOverlays = new Map();
+          console.log(`EVENTCG base "${nm}" [${img.width}x${img.height}] off(${img.offsetX || 0},${img.offsetY || 0}) canvas(${img.canvasW || 0}x${img.canvasH || 0}) -> nouvelle base`);
+        }
+        this._inEventCG = true; // on est dans une illustration EVENTCG -> pas de sprites
+        return;
+      }
+      // BGCG : une BASE remplit le CADRE PLEIN (~1280x720). Tout ce qui est plus
+      // petit (872x720 comme bg011n1, 728x248 comme les enfants bg098b, bandes…)
+      // est une EXPRESSION qui se compose PAR-DESSUS la base de SA famille (numéro
+      // du nom : bg011n1 -> 11, ne s'affiche que sur la base bg011*). Confirmé par
+      // l'utilisateur : bg011n1 (872x720) est l'expression de bg011n2 (1280x720).
+      const bgNum = this._bgNum(found.name);
+      const isFull = img.width >= 1200 && img.height >= 680;
+      if (isFull) {
+        // nouvelle base -> nouvelle scène : on efface persos
+        if (imgId !== this._currentBgId) {
+          this.sprites = new Map();
+          this._currentBgId = imgId;
+        }
+        this.currentBg = bitmap;
+        this.eventExprs = []; // on quitte un éventuel EVENTCG
+        this._inEventCG = false; // scène BGCG normale -> sprites autorisés
+        this._currentBgNum = bgNum;
+        console.log(`BGCG base "${found.name}" (#${imgId}, famille ${bgNum})`);
+        // on ne garde que les expressions de CETTE famille ; celles d'autres
+        // scènes (enfants restés collés…) sont jetées.
+        if (this.bgOverlays) {
+          this.bgOverlays = new Map(
+            [...this.bgOverlays].filter(([, o]) => bgNum != null && o.num === bgNum)
+          );
+        }
+      } else {
+        // expression : positionnée par l'offset CZ, sur le fond, liée à sa base
+        if (!this.bgOverlays) this.bgOverlays = new Map();
+        this.bgOverlays.set(imgId, {
+          bitmap, ox: img.offsetX || 0, oy: img.offsetY || 0,
+          w: img.width, h: img.height,
+          canvasW: img.canvasW || 1280, canvasH: img.canvasH || 720,
+          num: bgNum,
+        });
+        console.log(`BGCG expr "${found.name}" (#${imgId}, base ${bgNum}) -> overlay lié`);
+      }
+      // pas de rendu ici : on compose seulement à l'affichage (message/DRAW)
+    } catch (e) {
+      console.warn(`IMAGELOAD ${imgId}: décodé (${img.width}x${img.height}) mais affichage KO:`, e.message);
+    }
+  }
+
+  // Empile une expression EVENTCG positionnée. Un patch qui recouvre largement
+  // un existant (visage ré-émis) le REMPLACE sur place ; sinon il s'empile au-dessus
+  // (fgmp02 papier + fgmp03/04/05 détails = note complète).
+  _addEventExpr(layer) {
+    if (!this.eventExprs) this.eventExprs = [];
+    const overlap = (a, b) => {
+      const ix = Math.max(0, Math.min(a.ox + a.w, b.ox + b.w) - Math.max(a.ox, b.ox));
+      const iy = Math.max(0, Math.min(a.oy + a.h, b.oy + b.h) - Math.max(a.oy, b.oy));
+      const inter = ix * iy, minA = Math.min(a.w * a.h, b.w * b.h);
+      return minA > 0 ? inter / minA : 0;
+    };
+    let bestI = -1, best = 0;
+    this.eventExprs.forEach((o, i) => { const r = overlap(o, layer); if (r > best) { best = r; bestI = i; } });
+    if (bestI >= 0 && best > 0.6) this.eventExprs[bestI] = layer;
+    else this.eventExprs.push(layer);
+  }
+
+  // Numéro de famille d'un nom BGCG/EVENTCG : "bg098b" -> 98, "bg042" -> 42.
+  _bgNum(name) {
+    if (!name) return null;
+    const m = String(name).match(/(\d+)/);
+    return m ? parseInt(m[1], 10) : null;
+  }
+
+  // Sprite de personnage (IMAGELOAD mode != 0). ins = {imgId, mode, var1, x, y}.
+  async _loadSprite(ins) {
+    if (!this.imagePaks || !this.imagePaks.length) return;
+    const found = this._imageBytes(ins.imgId);
+    if (!found) {
+      console.debug(`SPRITE: imgId ${ins.imgId} introuvable (spécial ?)`);
+      return;
+    }
+    const img = decodeCZ(found.bytes);
+    if (!img) {
+      console.warn(`SPRITE ${ins.imgId} (${found.from}): CZ non décodé`);
+      return;
+    }
+    // Cadre propre de ce morceau (depuis l'en-tête CZ).
+    const ownFrameW = img.canvasW || this.renderer.canvas.width;
+    const ownFrameH = img.canvasH || this.renderer.canvas.height;
+    // BASE (corps) = morceau quasi pleine hauteur du cadre ; sinon expression.
+    const isBase = img.height >= 0.6 * ownFrameH;
+
+    if (!this.sprites) this.sprites = new Map();
+    const key = spriteKey(ins.imgId);             // ex "cgyk1" (perso+pose) ou null
+    const charId = key ? key.slice(0, 4) : null;  // ex "cgyk" = le personnage
+    // EMPLACEMENT = position écran (on ignore le drapeau du mode, ex. 258 vs 2).
+    const slot = ins.x > 0 ? "x" + Math.round(ins.x) : "m" + (ins.mode || 1);
+    // Une base retire le MÊME personnage des AUTRES positions (il ne peut être
+    // qu'à un endroit) -> règle les "jumelles" quand un perso se déplace.
+    if (isBase && charId) {
+      for (const [k, L] of this.sprites) {
+        if (k !== slot && L.baseChar === charId) this.sprites.delete(k);
+      }
+    }
+    if (!this.sprites.has(slot)) {
+      this.sprites.set(slot, { base: null, overlays: [], pending: [], frameW: ownFrameW, frameH: ownFrameH });
+    }
+    const layers = this.sprites.get(slot);
+
+    // Offset (position du morceau dans le cadre), avec repli sur (x,y).
+    let ox = img.offsetX || 0;
+    let oy = img.offsetY || 0;
+    if (ox === 0 && oy === 0 && (ins.x || ins.y)) {
+      ox = (ins.x || 0) - img.width / 2;
+      oy = (ins.y || 0) - img.height;
+    }
+    console.log(`SPRITE ${ins.imgId} -> ${found.from} [${img.width}x${img.height}] ` +
+      `off(${ox},${oy}) pos(${ins.x},${ins.y}) mode=${ins.mode} var1=${ins.var1} -> ${isBase ? "BASE" : "expression"}`);
+    try {
+      const bitmap = typeof createImageBitmap === "function"
+        ? await createImageBitmap(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height))
+        : { rgba: img.rgba, width: img.width, height: img.height };
+      // On stocke les DONNÉES BRUTES ; le placement est calculé au rendu avec le
+      // cadre de la base => peu importe l'ordre de chargement base/expression.
+      const layer = { bitmap, ox, oy, w: img.width, h: img.height, imgId: ins.imgId, key };
+      if (isBase) {
+        layers.frameW = ownFrameW; // la base fixe le cadre de référence du perso
+        layers.frameH = ownFrameH;
+        layers.baseChar = charId;  // pour retirer ce perso des autres positions
+        // position écran du personnage (xPos), pour ne pas tout centrer
+        layers.charX = ins.x > 0 ? ins.x : null;
+        const changed = layers.baseKey !== key || (layers.base && layers.base.imgId !== ins.imgId);
+        layers.base = layer;
+        layers.baseKey = key;
+        if (changed) layers.overlays = []; // nouvelle pose -> les anciens patches ne valent plus
+        // les patches en attente collent-ils à cette nouvelle base ?
+        if (layers.pending && layers.pending.length) {
+          const keep = [];
+          for (const p of layers.pending) {
+            if (p.key === key) this._addOverlay(layers, p);
+            else keep.push(p);
+          }
+          layers.pending = keep;
+        }
+      } else {
+        // patch (yeux/bouche/main/manpu) : il s'empile sur la base ACTUELLE si même
+        // perso+pose. Sinon il est destiné à une base FUTURE -> mis en attente.
+        if (!key || !layers.baseKey || key === layers.baseKey) {
+          this._addOverlay(layers, layer);
+        } else {
+          layers.pending.push(layer);
+        }
+      }
+      // pas de rendu ici : on compose seulement à l'affichage (message/DRAW)
+    } catch (e) {
+      console.warn(`SPRITE ${ins.imgId}: affichage KO:`, e.message);
+    }
+  }
+
+  // Ajoute un patch à la pile d'overlays d'un emplacement, EN ORDRE D'ARRIVÉE.
+  // Un patch ré-émis (lip-sync, clignement) RECOUVRE largement un overlay existant
+  // -> on le remplace SUR PLACE (il garde sa position dans la pile, donc son z-order).
+  // Un patch sur une NOUVELLE zone (la main, un manpu) -> empilé au-dessus.
+  _addOverlay(layers, layer) {
+    const overlap = (a, b) => {
+      const ix = Math.max(0, Math.min(a.ox + a.w, b.ox + b.w) - Math.max(a.ox, b.ox));
+      const iy = Math.max(0, Math.min(a.oy + a.h, b.oy + b.h) - Math.max(a.oy, b.oy));
+      const inter = ix * iy;
+      const minArea = Math.min(a.w * a.h, b.w * b.h);
+      return minArea > 0 ? inter / minArea : 0;
+    };
+    let bestI = -1, best = 0;
+    layers.overlays.forEach((o, i) => {
+      const r = overlap(o, layer);
+      if (r > best) { best = r; bestI = i; }
+    });
+    if (bestI >= 0 && best > 0.6) {
+      layers.overlays[bestI] = layer; // même feature ré-émise -> remplace sur place
+    } else {
+      layers.overlays.push(layer);    // feature distincte -> nouvelle couche au-dessus
+    }
+  }
+
+  listEntries() {
+    return this.pak ? this.pak.listEntries() : [];
+  }
+
+  _pick(o) {
+    return (o && (o[this.lang] || o.jp || o.en || o.zh)) || "";
+  }
+
+  /** Change la langue à chaud et repeint la ligne courante. */
+  setLang(lang) {
+    this.lang = lang;
+    this._redraw();
+  }
+
+  // Repeint la ligne actuellement affichée (après changement de langue).
+  _redraw() {
+    if (!this._cur) return;
+    if (this._cur.type === "message") {
+      const raw = this._pick(this._cur.ins);
+      const m = raw.match(/^@([^@]*)@([\s\S]*)$/);
+      this._renderBase();
+      this.renderer.drawDialogue(m ? m[1] : "", m ? m[2] : raw);
+    } else if (this._cur.type === "select") {
+      const labels = (this._cur.ins.choices || []).map((ch) => this._pick(ch));
+      this._renderBase();
+      this.renderer.drawChoices(labels);
+    }
+  }
+
+  // Repeint la base : fond, puis chaque perso. Le placement est calculé ICI
+  // avec le cadre de la BASE, donc l'ordre de chargement n'a pas d'importance.
+  // Un visage n'est JAMAIS dessiné sans sa base (pas de visage flottant).
+  _renderBase() {
+    this.renderer.clear();
+    const cw = this.renderer.canvas.width;
+    const ch = this.renderer.canvas.height;
+    if (this.currentBg) this.renderer.drawBackground(this.currentBg);
+    // expressions EVENTCG empilées (papier + détails…), chacune positionnée par
+    // son offset/cadre, fusionnées par-dessus la base
+    if (this.eventExprs) {
+      for (const e of this.eventExprs) {
+        const sx = cw / (e.canvasW || cw), sy = ch / (e.canvasH || ch);
+        this.renderer.drawSprite(e.bitmap, e.ox * sx, e.oy * sy, e.w * sx, e.h * sy);
+      }
+    }
+    // compléments de fond (nuit/matin/jour…) posés à leur offset, sous les persos
+    if (this.bgOverlays && !this.hideOverlays) {
+      for (const o of this.bgOverlays.values()) {
+        // une expression ne s'affiche que sur SA base (même numéro de famille)
+        if (o.num != null && this._currentBgNum != null && o.num !== this._currentBgNum) continue;
+        const sx = cw / (o.canvasW || cw), sy = ch / (o.canvasH || ch);
+        this.renderer.drawSprite(o.bitmap, o.ox * sx, o.oy * sy, o.w * sx, o.h * sy);
+      }
+    }
+    // Un EVENTCG est une illustration COMPLÈTE : on ne dessine pas les sprites
+    // de personnage par-dessus. (mais la date, elle, reste affichée.)
+    if (this.sprites && !this._inEventCG) {
+    const place = (layer, frameW, frameH, charX) => {
+      const scale = ch / frameH;
+      // horizontal : centré sur xPos du perso si connu, sinon cadre centré écran
+      const fLeft = charX != null
+        ? charX - (frameW * scale) / 2
+        : (cw - frameW * scale) / 2;
+      return [layer.bitmap, fLeft + layer.ox * scale, layer.oy * scale, layer.w * scale, layer.h * scale];
+    };
+    const slots = [...this.sprites.values()].sort((a, b) => (a.charX || 0) - (b.charX || 0));
+    for (const L of slots) {
+      if (!L.base) continue; // pas de base -> on ne dessine rien (ni les patches)
+      const fW = L.frameW || cw, fH = L.frameH || ch;
+      const baseRect = place(L.base, fW, fH, L.charX);
+      this.renderer.drawSprite(...baseRect);
+      if (this.layerDebug) this.renderer.drawDebugBox(baseRect[1], baseRect[2], baseRect[3], baseRect[4], `BASE ${L.base.imgId}`, 0);
+      (L.overlays || []).forEach((ov, i) => {
+        const r = place(ov, fW, fH, L.charX);
+        this.renderer.drawSprite(...r);
+        if (this.layerDebug) this.renderer.drawDebugBox(r[1], r[2], r[3], r[4], `${ov.imgId} [${ov.w}x${ov.h}]`, i + 1);
+      });
+    }
+    } // fin du bloc sprites (sauté pour les EVENTCG)
+    this._drawDateBadge(cw, ch);
+  }
+
+  // Médaillon de calendrier (jul_/aug_) en haut à gauche, par-dessus la scène.
+  // Masqué pendant les EVENTCG (illustrations plein écran), comme le vrai jeu.
+  // L'image est définie dans un petit repère (~200x200), PAS dans le repère écran :
+  // on la pose donc à une taille proportionnelle à l'écran, calée dans le coin.
+  _drawDateBadge(cw, ch) {
+    const d = this._dateBadge;
+    if (!d || this._inEventCG) return;
+    // taille cible ~ 13% de la largeur écran (comme le jeu d'origine), ratio gardé
+    const targetW = cw * 0.13;
+    const scale = targetW / d.w;
+    const margin = cw * 0.012; // petite marge depuis le bord
+    this.renderer.drawSprite(d.bitmap, margin, margin, d.w * scale, d.h * scale);
+  }
+
+  advance() {
+    this._clearAutoTimer();
+    if (this._advance) {
+      const r = this._advance;
+      this._advance = null;
+      r();
+    }
+  }
+
+  // Attente d'avancement d'un MESSAGE : clic normal, ou résolution auto si Auto
+  // (après un délai) ou Skip (quasi immédiat) sont actifs.
+  _waitAdvance() {
+    return new Promise((res) => {
+      this._advance = res;
+      if (this.skipMode) {
+        this._autoTimer = setTimeout(() => this.advance(), 30); // Skip : très rapide
+      } else if (this.autoMode) {
+        // Auto : délai proportionnel à la longueur du texte (lecture confortable)
+        const txt = (this._cur && this._cur.ins && this._pick(this._cur.ins)) || "";
+        const delay = Math.min(6000, 1200 + txt.length * 45);
+        this._autoTimer = setTimeout(() => this.advance(), delay);
+      }
+    });
+  }
+
+  // Annule un timer auto/skip en cours (au clic manuel, changement de mode…)
+  _clearAutoTimer() { if (this._autoTimer) { clearTimeout(this._autoTimer); this._autoTimer = null; } }
+
+  setAuto(on) {
+    this.autoMode = on === undefined ? !this.autoMode : !!on;
+    if (this.autoMode) this.skipMode = false;
+    this._clearAutoTimer();
+    if ((this.autoMode || this.skipMode) && this._advance) this.advance(); // relance le flux
+    return this.autoMode;
+  }
+  setSkip(on) {
+    this.skipMode = on === undefined ? !this.skipMode : !!on;
+    if (this.skipMode) this.autoMode = false;
+    this._clearAutoTimer();
+    if (this.skipMode && this._advance) this.advance();
+    return this.skipMode;
+  }
+  // Bouton "Voice" : rejoue la voix de la réplique courante.
+  replayVoice() {
+    if (this._lastVoice) this.audio.playVoice(this._lastVoice.bytes, this._lastVoice.from);
+  }
+
+  // Joue une vidéo (opening AIR_OP_A/B…) en plein écran par-dessus le canvas,
+  // et ne rend la main au script qu'à la FIN de la lecture. Clic ou Échap = skip.
+  async _playMovie(baseName) {
+    const buf = this._resolveMovie(baseName);
+    if (!buf) {
+      console.warn(`MOVIE "${baseName}" : fichier introuvable (importe AIR_OP_*.webm)`);
+      return;
+    }
+    // coupe le son du jeu pendant la vidéo (la vidéo a sa propre piste)
+    try { this.audio.stopBgm(); this.audio.stopSe(); this.audio.stopVoice(); } catch {}
+
+    const blob = new Blob([buf], { type: "video/webm" });
+    const url = URL.createObjectURL(blob);
+    const canvas = this.renderer.canvas;
+    const host = canvas.parentElement || document.body;
+
+    const video = document.createElement("video");
+    video.src = url;
+    video.autoplay = true;
+    video.controls = false;
+    video.playsInline = true;
+    // plein cadre par-dessus le canvas
+    Object.assign(video.style, {
+      position: "absolute", left: "0", top: "0",
+      width: "100%", height: "100%", objectFit: "contain",
+      background: "#000", zIndex: "50",
+    });
+    if (getComputedStyle(host).position === "static") host.style.position = "relative";
+    host.appendChild(video);
+
+    console.log(`MOVIE "${baseName}" -> lecture`);
+    await new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return; done = true;
+        try { video.pause(); } catch {}
+        video.remove();
+        URL.revokeObjectURL(url);
+        window.removeEventListener("keydown", onKey);
+        canvas.removeEventListener("click", onClick);
+        resolve();
+      };
+      const onKey = (e) => { if (e.key === "Escape" || e.key === " " || e.key === "Enter") finish(); };
+      const onClick = () => finish();
+      video.addEventListener("ended", finish);
+      video.addEventListener("error", finish);
+      window.addEventListener("keydown", onKey);
+      // petit délai avant d'armer le clic-skip (évite de zapper par le clic d'avant)
+      setTimeout(() => video.addEventListener("click", onClick), 300);
+      video.play().catch(() => { /* autoplay bloqué : le clic relancera */ });
+    });
+  }
+
+  // DIAGNOSTIC : exporte chaque couche chargée en PNG à sa RÉSOLUTION NATIVE
+  // (sans redimensionnement). Permet de distinguer un bug de décodage CZ (bords
+  // bruités dans le PNG natif) d'un fringe de matte (PNG natif propre, bruit
+  // n'apparaissant qu'à l'écran après mise à l'échelle). Touche P.
+  dumpLayers() {
+    const dump = (bitmap, w, h, name) => {
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const x = c.getContext("2d");
+      x.imageSmoothingEnabled = false;
+      x.clearRect(0, 0, w, h);
+      x.drawImage(bitmap, 0, 0, w, h);
+      c.toBlob((b) => {
+        const u = URL.createObjectURL(b);
+        const a = document.createElement("a");
+        a.href = u; a.download = name; a.click();
+        setTimeout(() => URL.revokeObjectURL(u), 1500);
+      });
+    };
+    let n = 0;
+    if (this.currentBg) {
+      dump(this.currentBg, this.currentBg.width, this.currentBg.height, `bg_full_${this._currentBgId || "x"}_${this.currentBg.width}x${this.currentBg.height}.png`);
+      n++;
+    }
+    if (this.bgOverlays) {
+      for (const [id, o] of this.bgOverlays) { dump(o.bitmap, o.w, o.h, `overlay_${id}_${o.w}x${o.h}.png`); n++; }
+    }
+    if (this.sprites) {
+      for (const L of this.sprites.values()) {
+        if (L.base) { dump(L.base.bitmap, L.base.w, L.base.h, `base_${L.base.imgId}_${L.base.w}x${L.base.h}.png`); n++; }
+        for (const ov of (L.overlays || [])) { dump(ov.bitmap, ov.w, ov.h, `lay_${ov.imgId}_${ov.w}x${ov.h}.png`); n++; }
+      }
+    }
+    console.log(`Dump: ${n} couche(s) exportée(s) en PNG natif (autorise les téléchargements multiples si demandé).`);
+  }
+
+  choose(i) {
+    if (this._choose) {
+      const r = this._choose;
+      this._choose = null;
+      r(i);
+    }
+  }
+
+  /** @param {number|string} ref index ou nom d'entrée (ex: "seen0000") */
+  // Résout une entrée script par nom (insensible à la casse / extension).
+  _resolveScript(name) {
+    const norm = (s) => String(s).toUpperCase().replace(/\.[A-Z0-9]+$/, "");
+    const target = norm(name);
+    return this.pak.listEntries().find((x) => norm(x.name) === target);
+  }
+
+  // Codes parsés d'un seen par nom, avec cache (pour les sauts inter-fichiers).
+  _codesFor(name) {
+    if (!this._scriptCache) this._scriptCache = new Map();
+    const e = this._resolveScript(name);
+    if (!e) return null;
+    if (this._scriptCache.has(e.index)) return this._scriptCache.get(e.index);
+    const codes = parseScript(this.pak.getEntry(e.index));
+    this._scriptCache.set(e.index, codes);
+    return codes;
+  }
+
+  async playEntry(ref) {
+    if (!this.pak) throw new Error("Aucun PAK chargé");
+    let index = ref;
+    let entryName = typeof ref === "string" ? ref : "";
+    if (typeof ref === "string") {
+      const e = this._resolveScript(ref);
+      if (!e) throw new Error(`Entrée "${ref}" introuvable dans le PAK`);
+      index = e.index;
+      entryName = e.name;
+    } else {
+      const e = this.pak.listEntries().find((x) => x.index === index);
+      entryName = e ? e.name : String(index);
+    }
+    this.vars = {};
+    this.currentBg = null;
+    this._currentBgId = null;
+    this.bgOverlays = new Map();
+    this.sprites = new Map();
+    const codes = parseScript(this.pak.getEntry(index));
+
+    const vm = new AIRVM(codes, {
+      message: async (ins) => {
+        this._cur = { type: "message", ins };
+        // VOIX : le u16 `unk` du MESSAGE est l'id direct d'entrée VOICE.PAK.
+        // unk==0 => narration sans voix. On coupe la voix précédente puis on joue.
+        if (ins.unk) {
+          const rv = this._resolveVoice(ins.unk);
+          if (rv) {
+            if (this.voiceDiag) console.log(`VOICE ${rv.from} [${rv.fmt}]`);
+            this.audio.playVoice(rv.bytes, rv.from);
+            this._lastVoice = rv; // mémorisé pour le bouton "Voice" (rejouer)
+          } else {
+            this.audio.stopVoice();
+            this._lastVoice = null;
+            if (this.voiceDiag) console.log(`VOICE id${ins.unk} introuvable dans VOICE.PAK/VOICE1.PAK`);
+          }
+        } else {
+          this.audio.stopVoice(); // narration : couper toute voix qui traîne
+          this._lastVoice = null;
+        }
+        const raw = this._pick(ins);
+        const m = raw.match(/^@([^@]*)@([\s\S]*)$/);
+        const name = m ? m[1] : "";
+        const text = m ? m[2] : raw;
+        this._renderBase();
+        this.renderer.drawDialogue(name, text);
+        await this._waitAdvance();
+      },
+      select: async (ins) => {
+        this._cur = { type: "select", ins };
+        this._clearAutoTimer();
+        this.autoMode = false; this.skipMode = false; // un choix interrompt auto/skip
+        const labels = (ins.choices || []).map((ch) => this._pick(ch));
+        this._renderBase();
+        this.renderer.drawChoices(labels);
+        const idx = await new Promise((res) => (this._choose = res));
+        if (ins.varId != null) this.vars["#" + ins.varId] = idx; // SELECT -> #varId
+        return idx;
+      },
+      debug: async (ins) => {
+        // On observe les opcodes sprites non encore décodés pour reverse leur
+        // structure depuis les octets réels (comme on a fait pour IMAGELOAD).
+        const watch = ["BASE", "FACE", "DISP", "IMAGEUPDATE", "SWAP", "MASK", "PRIORITY", "UVWH", "SIZE", "MANPU"];
+        if (watch.includes(ins.op)) {
+          console.log(`OP ${ins.op}: u16=[${(ins.u16 || []).join(",")}]`);
+        }
+        // Opcodes de variable/flag : on extrait les chaînes ASCII (ex "#6001=1")
+        // des octets bruts, pour reverse leur format et brancher l'exécution.
+        const flagOps = ["EQU", "EQUN", "EQUV", "ADD", "SUB", "MUL", "DIV", "MOD", "AND", "OR", "RANDOM", "SET", "FLAGCLR", "VARSTR", "VARSTR_ADD"];
+        // EQUN [idVar, valeur] : affectation littérale #idVar = valeur.
+        // Format confirmé sur dump réel (strings=[], u16=[id,val]). Remplit
+        // this.vars pour que les conditions IFN/IFY s'évaluent correctement.
+        if (ins.op === "EQUN" && ins.u16 && ins.u16.length >= 2) {
+          this.vars["#" + ins.u16[0]] = ins.u16[1];
+        }
+        if (flagOps.includes(ins.op) && ins.raw) {
+          const strs = [];
+          let cur = "";
+          for (const b of ins.raw) {
+            if (b >= 0x20 && b < 0x7f) cur += String.fromCharCode(b);
+            else { if (cur.length >= 2) strs.push(cur); cur = ""; }
+          }
+          if (cur.length >= 2) strs.push(cur);
+          console.log(`FLAG ${ins.op}: strings=${JSON.stringify(strs)} u16=[${(ins.u16 || []).join(",")}]`);
+        }
+        // Opcodes AUDIO : on reverse leurs paramètres (chaînes + u16) ET on tente
+        // la lecture en best-effort (id = 1er u16) depuis voice.PAK / SE.PAK / BGM.
+        const audioOps = ["VOICE", "VOICE_STOP", "BGM", "BGM_WAIT_START", "BGM_WAIT_FADE",
+          "BGM_PUSH", "BGM_POP", "BGM_ASYNC_FADE_STOP", "SE", "SE_STOP", "SE_WAIT",
+          "SE_WAIT_FADE", "VOLUME", "CHAR_VOLUME", "SETBGMFLAG"];
+        if (audioOps.includes(ins.op)) {
+          const strs = [];
+          let cur = "";
+          for (const b of (ins.raw || [])) {
+            if (b >= 0x20 && b < 0x7f) cur += String.fromCharCode(b);
+            else { if (cur.length >= 2) strs.push(cur); cur = ""; }
+          }
+          if (cur.length >= 2) strs.push(cur);
+          const u16 = ins.u16 || [];
+          console.log(`AUDIO-OP ${ins.op}: strings=${JSON.stringify(strs)} u16=[${u16.join(",")}]`);
+          try {
+            const idScript = u16[0] || 0;
+            if (ins.op === "VOICE_STOP") {
+              this.audio.stopVoice();
+            } else if (ins.op === "SE_STOP") {
+              this.audio.stopSe();
+            } else if (ins.op === "BGM_ASYNC_FADE_STOP" || ins.op === "BGM_POP") {
+              this.audio.stopBgm();
+            } else if (ins.op === "SE" || ins.op === "SE_WAIT") {
+              const r = this._resolveSe(idScript, u16[2]);
+              if (!r) { console.log(`  SE id=${idScript}: aucun PAK SE / hors plage`); }
+              else if (r.stop) { this.audio.stopSe(); console.log("  SE: stop"); }
+              else if (r.fmt === "inconnu" || r.fmt.startsWith("riff:")) {
+                const hex = [...r.bytes.slice(0, 12)].map((x) => x.toString(16).padStart(2, "0")).join(" ");
+                console.warn(`  SE -> ${r.from} format "${r.fmt}" NON décodable (octets: ${hex})`);
+              } else {
+                console.log(`  SE -> ${r.from} [${r.fmt}]${r.loop ? " (boucle)" : ""}`);
+                this.audio.playSe(r.bytes, r.from, r.loop);
+              }
+            } else if (ins.op === "BGM" || ins.op === "BGM_WAIT_START" || ins.op === "BGM_WAIT_FADE") {
+              const r = this._resolveBgm(idScript);
+              if (!r) { console.log(`  BGM id=${idScript}: aucun BGM.PAK importé`); }
+              else if (r.stop) { this.audio.stopBgm(); console.log("  BGM: stop/fondu"); }
+              else if (r.fmt === "inconnu" || r.fmt.startsWith("riff:")) {
+                const hex = [...r.bytes.slice(0, 12)].map((x) => x.toString(16).padStart(2, "0")).join(" ");
+                console.warn(`  BGM -> ${r.from} format "${r.fmt}" NON décodable (octets: ${hex})`);
+              } else {
+                console.log(`  BGM -> ${r.from} [${r.fmt}] (boucle)`);
+                this.audio.playBgm(r.bytes, r.from);
+              }
+            }
+          } catch (e) { console.warn(`AUDIO-OP ${ins.op} KO:`, e.message); }
+        }
+      },
+      imageload: async (ins) => {
+        if (ins.kind === "background") await this._loadBackground(ins.imgId);
+        else await this._loadSprite(ins); // mode != 0 = sprite personnage
+      },
+      draw: async () => {
+        // DRAW compose la scène à l'écran : on repeint la base (fond chargé).
+        this._renderBase();
+      },
+      movie: async (ins) => {
+        await this._playMovie(ins.file);
+      },
+    });
+
+    // évaluateur branché sur le store de variables
+    vm.setExprEvaluator((expr) => evalExprValue(expr, this.vars));
+    // continuité inter-seen : la VM peut suivre JUMP/FARCALL vers d'autres seen
+    vm.scriptName = entryName;
+    vm.setScriptLoader((name) => this._codesFor(name));
+
+    await vm.run();
+    this.renderer.clear();
+    this.renderer.drawDialogue("", "[fin du script]");
+  }
+}

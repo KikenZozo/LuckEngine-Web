@@ -1,0 +1,56 @@
+# ============================================================================
+# LuckEngine-Web — .gitignore
+# ----------------------------------------------------------------------------
+# IMPORTANT : aucun fichier de jeu (contenu Key/VisualArts) ne doit être versionné.
+# Le joueur fournit SES PROPRES fichiers, extraits de sa copie légale d'AIR.
+# ============================================================================
+
+# --- Fichiers de jeu AIR (copyrightés — JAMAIS sur le dépôt) ---------------
+*.PAK
+*.pak
+*.cz
+*.cz0
+*.cz1
+*.cz2
+*.cz3
+*.cz4
+*.CZ
+*.CZ0
+*.CZ1
+*.CZ2
+*.CZ3
+*.CZ4
+
+# Vidéos (opening, etc.)
+*.webm
+*.mp4
+*.ogv
+*.ogg
+*.wmv
+*.mpg
+*.usm
+*.nwa
+
+# Images / audio extraits du jeu
+*.png
+*.jpg
+*.jpeg
+*.wav
+
+# Dossier où le joueur place ses fichiers de jeu en local
+game/AIR/*
+!game/AIR/PUT_AIR_FILES_HERE.txt
+
+# --- Dépendances & build ----------------------------------------------------
+node_modules/
+dist/
+build/
+*.zip
+
+# --- Système / éditeurs -----------------------------------------------------
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+*.swp
