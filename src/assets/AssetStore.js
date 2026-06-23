@@ -8,7 +8,11 @@
 
 const DB_NAME = "LuckEngineWeb";
 const STORE = "files";
+<<<<<<< HEAD
 const VERSION = 2; // v2 : ajout du store "saves" (cf. SaveManager)
+=======
+const VERSION = 1;
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -18,10 +22,13 @@ function openDB() {
       if (!db.objectStoreNames.contains(STORE)) {
         db.createObjectStore(STORE, { keyPath: "name" });
       }
+<<<<<<< HEAD
       // garde les deux stores cohérents quel que soit le module qui ouvre en 1er
       if (!db.objectStoreNames.contains("saves")) {
         db.createObjectStore("saves", { keyPath: "slot" });
       }
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);

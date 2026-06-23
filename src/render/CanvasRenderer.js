@@ -214,6 +214,7 @@ export class CanvasRenderer {
     this.ctx.font = "22px system-ui, sans-serif";
     this.ctx.fillText(text, 40, 60);
   }
+<<<<<<< HEAD
 
   /** Texte narratif de cinématique (LOG_BEGIN) : lignes centrées qui s'accumulent
    *  au centre de l'écran, sans fenêtre de dialogue. */
@@ -237,4 +238,6 @@ export class CanvasRenderer {
     }
     ctx.restore();
   }
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
 }

@@ -120,6 +120,7 @@ function wireControls() {
   document.querySelector("#btn-auto")?.addEventListener("click", () => { game.setAuto(); syncCtrl(); });
   document.querySelector("#btn-skip")?.addEventListener("click", () => { game.setSkip(); syncCtrl(); });
   document.querySelector("#btn-voice")?.addEventListener("click", () => game.replayVoice());
+<<<<<<< HEAD
   document.querySelector("#btn-sysmenu")?.addEventListener("click", () => openSaveMenu("save"));
 }
 wireControls();
@@ -175,6 +176,14 @@ async function openSaveMenu(mode = "save") {
 function closeSaveMenu() { const el = document.querySelector("#savemenu"); if (el) el.style.display = "none"; }
 document.querySelector("#savemenu-close")?.addEventListener("click", closeSaveMenu);
 
+=======
+  document.querySelector("#btn-sysmenu")?.addEventListener("click", () => {
+    console.log("Menu système : à implémenter (save/load/config/titre)");
+  });
+}
+wireControls();
+
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
 // ---- collecte de fichiers (input dossier / multi / glisser-déposer) --------
 function isPak(name) {
   return /\.pak$/i.test(name);
@@ -423,16 +432,26 @@ async function boot() {
 }
 
 // ---- Écran titre (style AIR) -----------------------------------------------
+<<<<<<< HEAD
 async function showTitle() {
+=======
+function showTitle() {
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
   const el = document.querySelector("#title");
   const bg = document.querySelector("#title-bg");
   if (bg && !bg.src) {
     const url = game.titleImageURL("title1a");
     if (url) bg.src = url;
   }
+<<<<<<< HEAD
   // au 1er lancement (aucune sauvegarde), LOAD est grisé
   let hasSave = false;
   try { hasSave = (await game.listSaves()).length > 0; } catch {}
+=======
+  // au 1er lancement (pas de sauvegarde), LOAD est grisé
+  let hasSave = false;
+  try { hasSave = !!localStorage.getItem("luck.save"); } catch {}
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
   const loadBtn = document.querySelector('.title-btn[data-act="load"]');
   if (loadBtn) loadBtn.disabled = !hasSave;
   if (el) el.style.display = "block";
@@ -446,7 +465,11 @@ function wireTitle() {
     b.addEventListener("click", () => {
       const act = b.dataset.act;
       if (act === "new") { hideTitle(); try { localStorage.removeItem("luck.entry"); } catch {}; playRef(CONFIG.startEntry); }
+<<<<<<< HEAD
       else if (act === "load") { hideTitle(); openSaveMenu("load"); }
+=======
+      else if (act === "load") { console.log("LOAD : menu de chargement à venir"); }
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
       else if (act === "options") { console.log("OPTIONS : config à venir"); }
       else if (act === "manual") { console.log("MANUAL : manuel à venir"); }
       else if (act === "exit") { hideTitle(); showMenu(); } // EXIT -> menu chapitres (debug)

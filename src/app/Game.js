@@ -14,7 +14,10 @@ import { evalExprValue } from "../vm/ExprEval.js";
 import { decodeCZ } from "../image/czimage.js";
 import { spriteKey } from "./charcgKeys.js";
 import { AudioManager } from "../audio/AudioManager.js";
+<<<<<<< HEAD
 import { SaveManager } from "../save/SaveManager.js";
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
 
 export class Game {
   constructor(renderer, opts = {}) {
@@ -25,7 +28,10 @@ export class Game {
     this._advance = null;
     this._choose = null;
     this.audio = new AudioManager();
+<<<<<<< HEAD
     this.saves = new SaveManager();
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
     this.movies = new Map(); // nom de fichier -> ArrayBuffer (vidéos opening…)
   }
 
@@ -293,7 +299,10 @@ export class Game {
       // carton/décor d'avant reste collé).
       this.currentBg = { solid: "#000000" };
       this._currentBgId = imgId;
+<<<<<<< HEAD
       this._currentBgName = null;
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
       this.sprites = new Map();
       this.eventExprs = [];
       this._inEventCG = false;
@@ -365,7 +374,10 @@ export class Game {
           this._currentBgId = imgId;
         }
         this.currentBg = bitmap;
+<<<<<<< HEAD
         this._currentBgName = found.name;
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
         this.eventExprs = []; // on quitte un éventuel EVENTCG
         this._inEventCG = false; // scène BGCG normale -> sprites autorisés
         this._currentBgNum = bgNum;
@@ -378,6 +390,7 @@ export class Game {
           );
         }
       } else {
+<<<<<<< HEAD
         // expression : positionnée par l'offset CZ, sur le fond, liée à sa base.
         // Cas porte/fenêtre "open" (ex bg007n1o) : le calque OUVERT doit se poser
         // sur sa base FERMÉE plein écran (bg007n1c). Si cette base n'est pas le
@@ -401,6 +414,9 @@ export class Game {
             } catch {}
           }
         }
+=======
+        // expression : positionnée par l'offset CZ, sur le fond, liée à sa base
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
         if (!this.bgOverlays) this.bgOverlays = new Map();
         this.bgOverlays.set(imgId, {
           bitmap, ox: img.offsetX || 0, oy: img.offsetY || 0,
@@ -440,6 +456,7 @@ export class Game {
     return m ? parseInt(m[1], 10) : null;
   }
 
+<<<<<<< HEAD
   // Déduit le nom de la BASE fermée (plein écran) à partir d'une expression
   // "ouverte". Convention AIR : le calque open finit par "o", la base par "c"
   // (ex bg007n1o -> bg007n1c, bg007o -> bg007c, bg007yo -> bg007yc).
@@ -449,6 +466,8 @@ export class Game {
     return name.slice(0, -1) + "c";
   }
 
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
   // Sprite de personnage (IMAGELOAD mode != 0). ins = {imgId, mode, var1, x, y}.
   async _loadSprite(ins) {
     if (!this.imagePaks || !this.imagePaks.length) return;
@@ -832,8 +851,11 @@ export class Game {
       entryName = e ? e.name : String(index);
     }
     this.vars = {};
+<<<<<<< HEAD
     // Si on charge une sauvegarde : restaurer les variables capturées.
     if (this._pendingVars) { this.vars = { ...this._pendingVars }; this._pendingVars = null; }
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
     this.currentBg = null;
     this._currentBgId = null;
     this.bgOverlays = new Map();
@@ -864,6 +886,7 @@ export class Game {
         const m = raw.match(/^@([^@]*)@([\s\S]*)$/);
         const name = m ? m[1] : "";
         const text = m ? m[2] : raw;
+<<<<<<< HEAD
         // Point de sauvegarde courant (stable, au niveau d'un MESSAGE) : on
         // mémorise où on en est pour pouvoir reprendre exactement ici.
         this._savePoint = {
@@ -872,6 +895,8 @@ export class Game {
           preview: (text || "").slice(0, 60),
           bgId: this._currentBgId,   // pour restaurer le décor au chargement
         };
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
         this._renderBase();
         this.renderer.drawDialogue(name, text);
         await this._waitAdvance();
@@ -902,6 +927,7 @@ export class Game {
         // this.vars pour que les conditions IFN/IFY s'évaluent correctement.
         if (ins.op === "EQUN" && ins.u16 && ins.u16.length >= 2) {
           this.vars["#" + ins.u16[0]] = ins.u16[1];
+<<<<<<< HEAD
           // 8001 = id de l'image de FOND de base de la scène. Le jeu compose
           // base(8001) + expression(8002). Notre classement par taille se trompe
           // pour les bases petites (ex bg007n1o 448x664 = base via 8001). Quand
@@ -919,6 +945,8 @@ export class Game {
               console.log(`BGCG base (via 8001) #${id} -> promue en fond`);
             }
           }
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
         }
         if (flagOps.includes(ins.op) && ins.raw) {
           const strs = [];
@@ -990,6 +1018,7 @@ export class Game {
       movie: async (ins) => {
         await this._playMovie(ins.file);
       },
+<<<<<<< HEAD
       // WAIT(n) : pause auto de ~n unités (≈16ms/unité), puis continue seul.
       // WAIT() : attend un clic du joueur. Pendant un WAIT auto, un clic abrège.
       wait: async (ins) => {
@@ -1017,6 +1046,8 @@ export class Game {
         this._logLines = [];
         this._renderBase();
       },
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
     });
 
     // évaluateur branché sur le store de variables
@@ -1024,6 +1055,7 @@ export class Game {
     // continuité inter-seen : la VM peut suivre JUMP/FARCALL vers d'autres seen
     vm.scriptName = entryName;
     vm.setScriptLoader((name) => this._codesFor(name));
+<<<<<<< HEAD
     this._vm = vm; // référence pour snapshot/restore (sauvegarde)
 
     // Restauration éventuelle d'une sauvegarde (position dans le script).
@@ -1046,11 +1078,14 @@ export class Game {
       try { await this._loadBackground(this._pendingBgId); } catch {}
       this._pendingBgId = null;
     }
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
 
     await vm.run();
     this.renderer.clear();
     this.renderer.drawDialogue("", "[fin du script]");
   }
+<<<<<<< HEAD
 
   // ---- Sauvegarde / chargement (slots multi avec vignette) -----------------
 
@@ -1121,4 +1156,6 @@ export class Game {
 
   async listSaves() { return this.saves.list(); }
   async deleteSave(slot) { return this.saves.remove(slot); }
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
 }

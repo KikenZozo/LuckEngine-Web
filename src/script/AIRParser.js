@@ -122,6 +122,7 @@ export function parseAIRInstruction(code) {
           jump: r.readUint32()
         };
 
+<<<<<<< HEAD
       case "LOG_BEGIN": {
         // Texte narratif de cinématique (ex intro "My child…"). Même structure
         // de chaînes que MESSAGE : un u16 puis jp / en / zh.
@@ -136,6 +137,8 @@ export function parseAIRInstruction(code) {
         return out;
       }
 
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
       case "MESSAGE": {
         const unk = r.readUint16();
         const jp = r.readLenStringUTF16LE();

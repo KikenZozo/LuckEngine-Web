@@ -64,6 +64,7 @@ export class AIRVM {
     this.ip = idx;
   }
 
+<<<<<<< HEAD
   // Capture l'état d'exécution (pour sauvegarde). On stocke la POSITION octale
   // (stable entre rechargements) plutôt que l'index, + les piles d'appel.
   snapshot() {
@@ -87,6 +88,8 @@ export class AIRVM {
     this._restored = true; // empêche run() de réinitialiser ip à 0
   }
 
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
   // Charge un autre seen par nom et y bascule à la position 'pos'.
   _gotoScript(file, pos) {
     if (!this.loadScript) { this.ip++; return; }
@@ -121,10 +124,14 @@ export class AIRVM {
   }
 
   async run(maxSteps = 200000) {
+<<<<<<< HEAD
     // Ne PAS réinitialiser si une sauvegarde vient d'être restaurée (sinon on
     // repartirait du début en écrasant ip/piles posés par restoreState).
     if (!this._restored) this.reset();
     this._restored = false;
+=======
+    this.reset();
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
     let steps = 0;
     while (this.ip >= 0 && this.ip < this.codes.length) {
       const op = this.codes[this.ip].instruction.op;
@@ -255,6 +262,7 @@ export class AIRVM {
         this.ip++;
         break;
 
+<<<<<<< HEAD
       case "WAIT":
         // WAIT(n) = pause auto de n unités puis on continue ; WAIT() = attend le clic.
         await this.call("wait", ins, code);
@@ -271,6 +279,8 @@ export class AIRVM {
         this.ip++;
         break;
 
+=======
+>>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
       default:
         await this.call("debug", ins, code);
         this.ip++;
