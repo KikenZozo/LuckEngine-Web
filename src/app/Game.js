@@ -262,6 +262,42 @@ export class Game {
     return cv.toDataURL("image/png");
   }
 
+  // Découpe une bande horizontale (ex ControlPanel_icon0 = 5 icônes côte à côte)
+  // en N dataURL PNG, une par cellule. Sert à reconstruire l'UI in-game à partir
+  // des vraies planches d'icônes du jeu. Renvoie null si l'image est absente.
+  sliceStripURLs(name, n) {
+    const found = this._imageBytesByName(name);
+    if (!found) return null;
+    const img = decodeCZ(found.bytes);
+    if (!img) return null;
+    const full = document.createElement("canvas");
+    full.width = img.width; full.height = img.height;
+    full.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height), 0, 0);
+    const cw = img.width / n;
+    const urls = [];
+    for (let i = 0; i < n; i++) {
+      const c = document.createElement("canvas");
+      c.width = Math.round(cw); c.height = img.height;
+      c.getContext("2d").drawImage(full, i * cw, 0, cw, img.height, 0, 0, Math.round(cw), img.height);
+      urls.push(c.toDataURL("image/png"));
+    }
+    return urls;
+  }
+
+  // Rassemble les vraies images d'UI in-game (panneau de contrôle + fond Options)
+  // en dataURL, pour que l'interface HTML colle au jeu d'origine. Champs null si
+  // PARTS.PAK n'est pas importé (l'UI retombe alors sur les boutons génériques).
+  getInGameUiAssets() {
+    return {
+      cpBase: this.titleImageURL("ControlPanel_base"),
+      cpIcon0: this.sliceStripURLs("ControlPanel_icon0", 5),
+      cpIcon1: this.sliceStripURLs("ControlPanel_icon1", 5),
+      cpAuto: this.titleImageURL("ControlPanel_auto"),
+      optionsBg: this.titleImageURL("options_bg"),
+      systemBg: this.titleImageURL("system_menu_bg"),
+    };
+  }
+
   // Bornes (en RATIO 0..1) de la zone non-transparente d'une image RGBA.
   _opaqueBounds(rgba, w, h) {
     let minX = w, minY = h, maxX = -1, maxY = -1;
@@ -656,7 +692,7 @@ export class Game {
   // Transition fluide (fondu) entre l'écran courant et le nouveau décor.
   // Capture l'image actuelle du canvas, dessine la nouvelle scène, puis fait
   // un cross-fade en animant l'opacité — au lieu d'un changement brutal/noir.
-  async _fadeTransition(duration = 280) {
+  async _fadeTransition(duration = 340) {
     const r = this.renderer;
     const cv = r.canvas;
     let prev = null;
@@ -673,19 +709,32 @@ export class Game {
       after.width = cv.width; after.height = cv.height;
       after.getContext("2d").drawImage(cv, 0, 0); // photo de l'écran APRÈS
     } catch { return; }
+    // ease-in-out cubique : départ/arrivée doux comme dans le jeu original
+    const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
     const start = performance.now();
+    this._transitioning = true;
     await new Promise((res) => {
       const step = (now) => {
         const t = Math.min(1, (now - start) / duration);
+        const e = ease(t);
         r.clear();
         r.ctx.globalAlpha = 1; r.ctx.drawImage(prev, 0, 0);   // ancien dessous
-        r.ctx.globalAlpha = t; r.ctx.drawImage(after, 0, 0);  // nouveau qui apparaît
+        r.ctx.globalAlpha = e; r.ctx.drawImage(after, 0, 0);  // nouveau qui apparaît
         r.ctx.globalAlpha = 1;
         if (t < 1) requestAnimationFrame(step);
-        else { this._renderBase(); res(); }
+        else { this._renderBase(); this._transitioning = false; res(); }
       };
       requestAnimationFrame(step);
     });
+    // la scène vient d'être présentée : évite un 2e fondu redondant au MESSAGE
+    // qui suit un HAIKEI_SET déjà fondu.
+    this._lastMsgScene = this._sceneKey();
+  }
+
+  // Clé d'identité de la scène (décor + EVENTCG). Sert à déclencher un fondu
+  // automatique uniquement quand le DÉCOR change (pas à chaque clignement de sprite).
+  _sceneKey() {
+    return `${this._currentBgId}|${this._currentBgName || ""}|${this._inEventCG ? 1 : 0}`;
   }
 
   _renderBase() {
@@ -1074,6 +1123,7 @@ export class Game {
     this._currentBgId = null;
     this.bgOverlays = new Map();
     this.sprites = new Map();
+    this._lastMsgScene = undefined; // pas de fondu sur la 1re réplique d'un seen
     const codes = parseScript(this.pak.getEntry(index));
 
     const vm = new AIRVM(codes, {
@@ -1108,7 +1158,14 @@ export class Game {
           preview: (text || "").slice(0, 60),
           bgId: this._currentBgId,   // pour restaurer le décor au chargement
         };
-        this._renderBase();
+        // Fondu enchaîné automatique quand le DÉCOR a changé depuis la dernière
+        // réplique (transition douce entre scènes, comme le jeu original). Pas de
+        // fondu en mode Skip (instantané) ni sur la toute 1re réplique.
+        const sceneKey = this._sceneKey();
+        const sceneChanged = this._lastMsgScene !== undefined && this._lastMsgScene !== sceneKey;
+        this._lastMsgScene = sceneKey;
+        if (sceneChanged && !this.skipMode) await this._fadeTransition();
+        else this._renderBase();
         await this._typewrite(name, text); // frappe progressive (clic = complète)
         await this._waitAdvance();         // puis attend le clic pour avancer
       },
@@ -1381,4 +1438,15 @@ export class Game {
 
   async listSaves() { return this.saves.list(); }
   async deleteSave(slot) { return this.saves.remove(slot); }
+
+  // Sauvegarde/chargement rapide (slot dédié "quick", comme les boutons du
+  // panneau de contrôle in-game). N'apparaît pas dans la grille de slots numérotés.
+  async quickSave() { return this.saveToSlot("quick"); }
+  async hasQuickSave() { return !!(await this.saves.get("quick")); }
+  async quickLoad() {
+    const rec = await this.saves.get("quick");
+    if (!rec) return false;
+    await this.loadFromSlot("quick");
+    return true;
+  }
 }

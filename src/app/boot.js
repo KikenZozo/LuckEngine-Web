@@ -134,13 +134,20 @@ window.addEventListener("keyup", (ev) => {
   if (ev.key === "Control") { game.setSkip(false); syncCtrl(); } // relâche Ctrl = stop Skip
 });
 
-// Synchronise l'état visuel des boutons de contrôle avec le moteur.
+// Synchronise l'état visuel des boutons de contrôle avec le moteur (panneau
+// image ET boutons HTML de repli).
 function syncCtrl() {
   document.querySelector("#btn-auto")?.classList.toggle("active", !!game.autoMode);
   document.querySelector("#btn-skip")?.classList.toggle("active", !!game.skipMode);
+  document.querySelectorAll("#ctrlpanel .cp-btn").forEach((b) => {
+    const act = b.dataset.act;
+    if (act === "auto" || act === "skip") cpSet(b, cpIsActive(act));
+  });
+  const led = document.querySelector("#cp-autoled");
+  if (led) led.style.display = game.autoMode ? "block" : "none";
 }
 
-// Câblage des boutons de contrôle (Auto / Skip / Voice / Menu système).
+// Câblage des boutons de contrôle HTML de repli (si PARTS.PAK absent).
 function wireControls() {
   document.querySelectorAll("#ctrlbar .ctrlbtn").forEach((b) => wireHoverSound(b));
   document.querySelector("#btn-auto")?.addEventListener("click", () => { uiSound("TOGGLE"); game.setAuto(); syncCtrl(); });
@@ -149,6 +156,89 @@ function wireControls() {
   document.querySelector("#btn-menu2")?.addEventListener("click", () => { uiSound("ENTER"); openSysMenu(); });
 }
 wireControls();
+
+// ---- Panneau de contrôle in-game (vraies images ControlPanel_*) ------------
+// 5 icônes (Auto, Skip, Sauvegarde rapide, Chargement rapide, Menu) avec état
+// éteint (icon0) / allumé (icon1), témoin ambre quand Auto est actif.
+let _cpAssets = null;
+const CP_ACTS = ["auto", "skip", "qsave", "qload", "menu"];
+function cpSet(b, bright) {
+  if (!_cpAssets) return;
+  const i = +b.dataset.i;
+  b.style.backgroundImage = `url(${(bright ? _cpAssets.cpIcon1 : _cpAssets.cpIcon0)[i]})`;
+}
+function cpIsActive(act) {
+  return (act === "auto" && !!game.autoMode) || (act === "skip" && !!game.skipMode);
+}
+function flashCp(b) { try { b.animate([{ filter: "brightness(2.6)" }, { filter: "brightness(1)" }], { duration: 380 }); } catch {} }
+
+function buildControlPanel() {
+  _cpAssets = game.getInGameUiAssets();
+  const bar = document.querySelector("#ctrlbar");
+  if (!bar || !_cpAssets.cpBase || !_cpAssets.cpIcon0 || !_cpAssets.cpIcon1) return; // repli HTML
+  const scale = 1.5;
+  const W = 376 * scale, H = 40 * scale;
+  const stripW = 336 * scale, iconW = stripW / 5, marginX = (W - stripW) / 2;
+  bar.innerHTML = "";
+  bar.style.cssText = "position:absolute; right:16px; bottom:14px; z-index:40;";
+  const panel = document.createElement("div");
+  panel.id = "ctrlpanel";
+  panel.style.cssText = `position:relative; width:${W}px; height:${H}px; background:url(${_cpAssets.cpBase}) no-repeat; background-size:100% 100%; filter:drop-shadow(0 2px 7px rgba(0,0,0,.55));`;
+  const titles = { auto: "Auto", skip: "Skip", qsave: "Sauvegarde rapide", qload: "Chargement rapide", menu: "Menu" };
+  CP_ACTS.forEach((act, i) => {
+    const b = document.createElement("button");
+    b.className = "cp-btn"; b.dataset.act = act; b.dataset.i = i; b.title = titles[act];
+    b.style.cssText = `position:absolute; left:${marginX + i * iconW}px; top:0; width:${iconW}px; height:${H}px; border:0; padding:0; margin:0; cursor:pointer; background:transparent url(${_cpAssets.cpIcon0[i]}) no-repeat center/72%;`;
+    panel.appendChild(b);
+  });
+  if (_cpAssets.cpAuto) {
+    const led = document.createElement("img");
+    led.id = "cp-autoled"; led.src = _cpAssets.cpAuto;
+    led.style.cssText = `position:absolute; left:${marginX + iconW * 0.5 - 14}px; top:${H / 2 - 14}px; width:28px; height:auto; pointer-events:none; display:none;`;
+    panel.appendChild(led);
+  }
+  bar.appendChild(panel);
+  wireControlPanel();
+}
+
+// Applique les vrais fonds aux menus système et options (system_menu_bg /
+// options_bg), avec un voile sombre derrière les contrôles pour la lisibilité.
+function applyMenuSkins() {
+  if (!_cpAssets) _cpAssets = game.getInGameUiAssets();
+  const opt = document.querySelector("#optionsmenu");
+  if (opt && _cpAssets.optionsBg) {
+    opt.style.background = `#0c1018 url(${_cpAssets.optionsBg}) center/cover no-repeat`;
+    const inner = opt.querySelector("div");
+    if (inner) { inner.style.background = "rgba(8,12,20,.66)"; inner.style.padding = "26px 36px"; inner.style.borderRadius = "14px"; inner.style.boxShadow = "0 8px 30px rgba(0,0,0,.5)"; }
+  }
+  const sys = document.querySelector("#sysmenu");
+  if (sys && _cpAssets.systemBg) {
+    sys.style.background = `#0c1018 url(${_cpAssets.systemBg}) center/cover no-repeat`;
+    const inner = sys.querySelector("div");
+    if (inner) { inner.style.background = "rgba(8,12,20,.55)"; inner.style.padding = "24px 32px"; inner.style.borderRadius = "14px"; inner.style.boxShadow = "0 8px 30px rgba(0,0,0,.5)"; }
+  }
+}
+
+function wireControlPanel() {
+  document.querySelectorAll("#ctrlpanel .cp-btn").forEach((b) => {
+    const act = b.dataset.act;
+    b.addEventListener("mouseenter", () => { uiSound("CURSOR"); cpSet(b, true); });
+    b.addEventListener("mouseleave", () => cpSet(b, cpIsActive(act)));
+    b.addEventListener("click", async () => {
+      game.audio?.resume();
+      if (act === "auto") { uiSound("TOGGLE"); game.setAuto(); syncCtrl(); }
+      else if (act === "skip") { uiSound("TOGGLE"); game.setSkip(); syncCtrl(); }
+      else if (act === "menu") { uiSound("ENTER"); openSysMenu(); }
+      else if (act === "qsave") {
+        try { await game.quickSave(); uiSound("ENTER"); flashCp(b); }
+        catch (e) { uiSound("INVALID"); console.warn("Quick save:", e.message); }
+      } else if (act === "qload") {
+        if (await game.hasQuickSave()) { uiSound("ENTER"); try { await game.quickLoad(); } catch (e) { console.warn("Quick load:", e.message); } }
+        else uiSound("INVALID");
+      }
+    });
+  });
+}
 
 // ---- Sons d'interface (SYSSE.PAK) ------------------------------------------
 // CURSOR = survol, ENTER = validation, CANCEL = retour, INVALID = action interdite.
@@ -406,6 +496,9 @@ async function loadAll() {
   // UI : précharge la fenêtre de dialogue (MWIN) et les choix (SELWIN) depuis
   // PARTS.PAK pour un rendu fidèle au jeu original.
   try { await game.loadUiSkin(); } catch (e) { console.warn("UI skin:", e.message); }
+  // Panneau de contrôle in-game + fonds des menus, à partir des vraies images.
+  try { buildControlPanel(); } catch (e) { console.warn("Control panel:", e.message); }
+  try { applyMenuSkins(); } catch (e) { console.warn("Menu skins:", e.message); }
   // VIDÉOS : on scanne les .webm/.mp4/.ogv importés (opening AIR_OP_A/B, etc.).
   // Le VM les jouera sur l'opcode MOVIE. On garde les octets bruts par nom.
   try {
@@ -594,5 +687,5 @@ function wireTitle() {
   });
 }
 
-console.log("LuckEngine-Web boot v3.17 — sons système SYSSE.PAK + frappe progressive du texte");
+console.log("LuckEngine-Web boot v3.18 — panneau de contrôle ControlPanel_*, menus skinés, fondus de scène");
 boot();
