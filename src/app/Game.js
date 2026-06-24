@@ -27,6 +27,8 @@ export class Game {
     this.audio = new AudioManager();
     this.saves = new SaveManager();
     this.movies = new Map(); // nom de fichier -> ArrayBuffer (vidéos opening…)
+    this._history = [];      // backlog : répliques déjà lues (speaker, text, voice)
+
     // Logs de debug : silencieux par défaut, activable via game.debug = true
     // ou en ajoutant ?debug à l'URL. Garde la console propre pour le joueur.
     this.debug = (() => {
