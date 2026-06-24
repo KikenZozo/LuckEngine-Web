@@ -5,6 +5,9 @@
 // Sinon -> écran d'import (glisser le dossier de jeu ou choisir les .PAK),
 // puis stockage + lancement. Aux fois suivantes : plus aucune manip.
 // ============================================================================
+const DEBUG = (() => { try { return /[?&]debug\b/.test(location.search); } catch { return false; } })();
+const dlog = (...a) => { if (DEBUG) console.log(...a); };
+
 
 import { CanvasRenderer } from "../render/CanvasRenderer.js";
 import { Game } from "./Game.js";
@@ -32,9 +35,9 @@ window.audioDiag = function () {
     const e = pak.listEntries();
     const head = e.slice(0, 12).map((x) => `${x.id}:${x.name}`).join("  ");
     const tail = e.slice(-4).map((x) => `${x.id}:${x.name}`).join("  ");
-    console.log(`AUDIO ${name} — ${e.length} entrées | ids ${e[0]?.id}..${e[e.length - 1]?.id}`);
-    console.log(`   début: ${head}`);
-    console.log(`   fin  : ${tail}`);
+    dlog(`AUDIO ${name} — ${e.length} entrées | ids ${e[0]?.id}..${e[e.length - 1]?.id}`);
+    dlog(`   début: ${head}`);
+    dlog(`   fin  : ${tail}`);
   }
   console.log("Astuce: tape `voiceDiag(true)` puis avance dans une scène voisée pour logger l'id voix de chaque MESSAGE.");
 };
@@ -70,7 +73,7 @@ function wireLangBar() {
 wireLangBar();
 
 canvas.addEventListener("click", (ev) => {
-  if (game.audio) game.audio.resume(); // débloque l'audio au 1er geste
+  if (game.audio) { game.audio.resume(); applySavedVolumes(); } // débloque l'audio + volumes
   const r = canvas.getBoundingClientRect();
   const px = (ev.clientX - r.left) * (canvas.width / r.width);
   const py = (ev.clientY - r.top) * (canvas.height / r.height);
@@ -79,23 +82,45 @@ canvas.addEventListener("click", (ev) => {
   else game.advance();
 });
 
+// Survol de la souris : met en évidence le choix sous le curseur (SELWIN_s + son).
+canvas.addEventListener("mousemove", (ev) => {
+  if (!game._activeChoices) { canvas.style.cursor = ""; return; } // seulement pendant un choix
+  const r = canvas.getBoundingClientRect();
+  const px = (ev.clientX - r.left) * (canvas.width / r.width);
+  const py = (ev.clientY - r.top) * (canvas.height / r.height);
+  const hit = renderer.hitChoice(px, py);
+  canvas.style.cursor = hit >= 0 ? "pointer" : "";
+  game.hoverChoice(hit);
+});
+
 // Touche L : affiche/masque l'overlay de debug des couches (cadre + n° par couche).
 window.addEventListener("keydown", (ev) => {
   const k = ev.key.toLowerCase();
+  if (k === "escape") {
+    // Échap : ferme le menu ouvert, sinon ouvre le menu système.
+    const sys = document.querySelector("#sysmenu");
+    const sav = document.querySelector("#savemenu");
+    const opt = document.querySelector("#optionsmenu");
+    if (opt && opt.style.display === "block") { opt.style.display = "none"; }
+    else if (sav && sav.style.display === "block") { closeSaveMenu(); }
+    else if (sys && sys.style.display === "block") { closeSysMenu(); }
+    else { openSysMenu(); }
+    return;
+  }
   if (k === "l") {
     game.layerDebug = !game.layerDebug;
-    console.log("Layer debug:", game.layerDebug ? "ON" : "OFF", "(touche L)");
+    dlog("Layer debug:", game.layerDebug ? "ON" : "OFF", "(touche L)");
     game._redraw();
   } else if (k === "s") {
     renderer.smoothing = !renderer.smoothing;
-    console.log("Lissage (imageSmoothing):", renderer.smoothing ? "ON" : "OFF", "(touche S)");
+    dlog("Lissage (imageSmoothing):", renderer.smoothing ? "ON" : "OFF", "(touche S)");
     game._redraw();
   } else if (k === "p") {
-    console.log("Export des couches en PNG natif… (touche P)");
+    dlog("Export des couches en PNG natif… (touche P)");
     game.dumpLayers();
   } else if (k === "o") {
     game.hideOverlays = !game.hideOverlays;
-    console.log("Compléments de décor:", game.hideOverlays ? "MASQUÉS" : "affichés", "(touche O)");
+    dlog("Compléments de décor:", game.hideOverlays ? "MASQUÉS" : "affichés", "(touche O)");
     game._redraw();
   } else if (k === "a") {
     syncCtrl(game.setAuto());          // A = bascule Auto
@@ -120,26 +145,97 @@ function wireControls() {
   document.querySelector("#btn-auto")?.addEventListener("click", () => { game.setAuto(); syncCtrl(); });
   document.querySelector("#btn-skip")?.addEventListener("click", () => { game.setSkip(); syncCtrl(); });
   document.querySelector("#btn-voice")?.addEventListener("click", () => game.replayVoice());
-<<<<<<< HEAD
-  document.querySelector("#btn-sysmenu")?.addEventListener("click", () => openSaveMenu("save"));
+  document.querySelector("#btn-menu2")?.addEventListener("click", () => openSysMenu());
 }
 wireControls();
 
+// ---- Menu système in-game (Reprendre / Save / Load / Options / Titre) ------
+function openSysMenu() {
+  const el = document.querySelector("#sysmenu");
+  if (el) el.style.display = "block";
+}
+function closeSysMenu() {
+  const el = document.querySelector("#sysmenu");
+  if (el) el.style.display = "none";
+}
+function wireSysMenu() {
+  document.querySelectorAll(".sysmenu-btn").forEach((b) => {
+    b.addEventListener("click", () => {
+      const act = b.dataset.act;
+      closeSysMenu();
+      if (act === "resume") { /* rien : on ferme juste */ }
+      else if (act === "save") openSaveMenu("save");
+      else if (act === "load") openSaveMenu("load");
+      else if (act === "options") openOptions();
+      else if (act === "title") { try { localStorage.removeItem("luck.entry"); } catch {}; showTitle(); }
+    });
+  });
+}
+wireSysMenu();
+
+// Applique les volumes (et vitesse auto) mémorisés en localStorage à l'audio.
+function applySavedVolumes() {
+  const load = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : +v; } catch { return d; } };
+  game.audio?.setVolume("voice", load("luck.vol.voice", 100) / 100);
+  game.audio?.setVolume("bgm", load("luck.vol.bgm", 55) / 100);
+  game.audio?.setVolume("se", load("luck.vol.se", 90) / 100);
+  game.autoSpeed = load("luck.autospeed", 5);
+}
+
+// ---- Options (volumes + vitesse auto), persistées en localStorage ----------
+function openOptions() {
+  const el = document.querySelector("#optionsmenu");
+  if (el) el.style.display = "block";
+}
+function wireOptions() {
+  const get = (id) => document.querySelector(id);
+  const load = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : +v; } catch { return d; } };
+  const save = (k, v) => { try { localStorage.setItem(k, String(v)); } catch {} };
+
+  const vVoice = get("#opt-voice"), vBgm = get("#opt-bgm"), vSe = get("#opt-se"), vAuto = get("#opt-auto");
+  if (vVoice) vVoice.value = load("luck.vol.voice", 100);
+  if (vBgm) vBgm.value = load("luck.vol.bgm", 55);
+  if (vSe) vSe.value = load("luck.vol.se", 90);
+  if (vAuto) vAuto.value = load("luck.autospeed", 5);
+
+  // applique immédiatement les volumes mémorisés
+  const apply = () => {
+    game.audio?.setVolume("voice", (+vVoice.value) / 100);
+    game.audio?.setVolume("bgm", (+vBgm.value) / 100);
+    game.audio?.setVolume("se", (+vSe.value) / 100);
+    game.autoSpeed = +vAuto.value; // 1..10, utilisé par le délai auto
+  };
+  apply();
+
+  vVoice?.addEventListener("input", () => { save("luck.vol.voice", vVoice.value); apply(); });
+  vBgm?.addEventListener("input", () => { save("luck.vol.bgm", vBgm.value); apply(); });
+  vSe?.addEventListener("input", () => { save("luck.vol.se", vSe.value); apply(); });
+  vAuto?.addEventListener("input", () => { save("luck.autospeed", vAuto.value); apply(); });
+
+  get("#opt-close")?.addEventListener("click", () => { const el = get("#optionsmenu"); if (el) el.style.display = "none"; });
+}
+wireOptions();
+
 // ---- Menu Save / Load (grille de slots + vignettes) ------------------------
-const SAVE_SLOTS = 12; // nombre de slots affichés
+const SAVE_SLOTS = 30;        // nombre total de slots
+const SAVE_PER_PAGE = 10;     // slots par page
+let _savePage = 0;            // page courante (0-based)
 
 async function openSaveMenu(mode = "save") {
   const el = document.querySelector("#savemenu");
   const grid = document.querySelector("#save-grid");
   const title = document.querySelector("#savemenu-title");
   if (!el || !grid) return;
-  title.textContent = mode === "load" ? "CHARGER" : "SAUVEGARDER";
+  const pages = Math.ceil(SAVE_SLOTS / SAVE_PER_PAGE);
+  if (_savePage >= pages) _savePage = 0;
+  title.innerHTML = `${mode === "load" ? "CHARGER" : "SAUVEGARDER"} <span style="font-size:16px; opacity:.6;">— page ${_savePage + 1}/${pages}</span>`;
   grid.innerHTML = "";
-  // index des slots existants
   const existing = {};
   try { (await game.listSaves()).forEach((s) => (existing[s.slot] = s)); } catch {}
 
-  for (let i = 1; i <= SAVE_SLOTS; i++) {
+  const first = _savePage * SAVE_PER_PAGE + 1;
+  const last = Math.min(SAVE_SLOTS, first + SAVE_PER_PAGE - 1);
+  for (let i = first; i <= last; i++) {
     const rec = existing[String(i)];
     const card = document.createElement("div");
     card.style.cssText = "border:1px solid #aeb6c8; border-radius:8px; overflow:hidden; background:#fff; cursor:pointer; display:flex; flex-direction:column; min-height:120px;";
@@ -156,7 +252,7 @@ async function openSaveMenu(mode = "save") {
     card.innerHTML = thumb + info;
     card.addEventListener("click", async () => {
       if (mode === "save") {
-        try { await game.saveToSlot(i); openSaveMenu("save"); } // refresh
+        try { await game.saveToSlot(i); openSaveMenu("save"); }
         catch (e) { console.warn("Save:", e.message); }
       } else {
         if (!rec) return;
@@ -164,26 +260,33 @@ async function openSaveMenu(mode = "save") {
         try { await game.loadFromSlot(i); } catch (e) { console.warn("Load:", e.message); }
       }
     });
-    // clic droit = supprimer un slot existant
     if (rec) card.addEventListener("contextmenu", async (ev) => {
       ev.preventDefault();
       if (confirm(`Supprimer la sauvegarde du slot ${i} ?`)) { await game.deleteSave(i); openSaveMenu(mode); }
     });
     grid.appendChild(card);
   }
+  // barre de pagination
+  let pager = document.querySelector("#save-pager");
+  if (!pager) {
+    pager = document.createElement("div");
+    pager.id = "save-pager";
+    pager.style.cssText = "display:flex; justify-content:center; gap:8px; margin-top:16px;";
+    grid.parentElement.appendChild(pager);
+  }
+  pager.innerHTML = "";
+  for (let p = 0; p < pages; p++) {
+    const b = document.createElement("button");
+    b.textContent = String(p + 1);
+    b.style.cssText = `border:1px solid #8a93a8; border-radius:6px; padding:5px 12px; cursor:pointer; font-size:14px; ${p === _savePage ? "background:#3a5bd0; color:#fff; border-color:#3a5bd0;" : "background:#fff; color:#39435c;"}`;
+    b.addEventListener("click", () => { _savePage = p; openSaveMenu(mode); });
+    pager.appendChild(b);
+  }
   el.style.display = "block";
 }
 function closeSaveMenu() { const el = document.querySelector("#savemenu"); if (el) el.style.display = "none"; }
 document.querySelector("#savemenu-close")?.addEventListener("click", closeSaveMenu);
 
-=======
-  document.querySelector("#btn-sysmenu")?.addEventListener("click", () => {
-    console.log("Menu système : à implémenter (save/load/config/titre)");
-  });
-}
-wireControls();
-
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
 // ---- collecte de fichiers (input dossier / multi / glisser-déposer) --------
 function isPak(name) {
   return /\.pak$/i.test(name);
@@ -249,7 +352,7 @@ async function loadAll() {
   if (game.imagePaks && game.imagePaks.length) {
     for (const { name, pak } of game.imagePaks) {
       const list = pak.listEntries();
-      console.log(`CG ${name}: ${list.length} entrées, ids ${list[0]?.id}..${list[list.length - 1]?.id}`);
+      dlog(`CG ${name}: ${list.length} entrées, ids ${list[0]?.id}..${list[list.length - 1]?.id}`);
     }
   } else {
     console.warn("Aucun CG pak chargé — réimporte en incluant BGCG.PAK et CHARCG.PAK.");
@@ -266,7 +369,7 @@ async function loadAll() {
       const buf2 = await store.getFile(name);
       if (buf2) {
         const list = game.loadAudioPak(buf2, name);
-        console.log(`AUDIO ${name}: ${list.length} entrées, ids ${list[0]?.id}..${list[list.length - 1]?.id}`);
+        dlog(`AUDIO ${name}: ${list.length} entrées, ids ${list[0]?.id}..${list[list.length - 1]?.id}`);
       }
     } catch (e) {
       console.warn(`${name} indisponible:`, e.message);
@@ -286,7 +389,7 @@ async function loadAll() {
       const buf = await store.getFile(name);
       if (buf) game.addMovie(name, buf);
     }
-    if (vids.length) console.log(`VIDÉO : ${vids.length} fichier(s) — ${vids.join(", ")}`);
+    if (vids.length) dlog(`VIDÉO : ${vids.length} fichier(s) — ${vids.join(", ")}`);
     else {
       console.info("Aucune vidéo importée — l'opening (AIR_OP_A/B) ne pourra pas jouer.");
       showVidBanner(); // propose d'ajouter les vidéos sans tout réimporter
@@ -309,7 +412,7 @@ function showVidBanner() {
     for (const f of files) map.set(f.name, await f.arrayBuffer());
     await store.saveFiles(map);
     for (const [name, buf] of map) game.addMovie(name, buf);
-    console.log(`VIDÉO ajoutée(s) : ${[...map.keys()].join(", ")}`);
+    dlog(`VIDÉO ajoutée(s) : ${[...map.keys()].join(", ")}`);
     banner.style.display = "none";
   });
 }
@@ -432,26 +535,16 @@ async function boot() {
 }
 
 // ---- Écran titre (style AIR) -----------------------------------------------
-<<<<<<< HEAD
 async function showTitle() {
-=======
-function showTitle() {
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
   const el = document.querySelector("#title");
   const bg = document.querySelector("#title-bg");
   if (bg && !bg.src) {
     const url = game.titleImageURL("title1a");
     if (url) bg.src = url;
   }
-<<<<<<< HEAD
   // au 1er lancement (aucune sauvegarde), LOAD est grisé
   let hasSave = false;
   try { hasSave = (await game.listSaves()).length > 0; } catch {}
-=======
-  // au 1er lancement (pas de sauvegarde), LOAD est grisé
-  let hasSave = false;
-  try { hasSave = !!localStorage.getItem("luck.save"); } catch {}
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
   const loadBtn = document.querySelector('.title-btn[data-act="load"]');
   if (loadBtn) loadBtn.disabled = !hasSave;
   if (el) el.style.display = "block";
@@ -465,11 +558,7 @@ function wireTitle() {
     b.addEventListener("click", () => {
       const act = b.dataset.act;
       if (act === "new") { hideTitle(); try { localStorage.removeItem("luck.entry"); } catch {}; playRef(CONFIG.startEntry); }
-<<<<<<< HEAD
       else if (act === "load") { hideTitle(); openSaveMenu("load"); }
-=======
-      else if (act === "load") { console.log("LOAD : menu de chargement à venir"); }
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
       else if (act === "options") { console.log("OPTIONS : config à venir"); }
       else if (act === "manual") { console.log("MANUAL : manuel à venir"); }
       else if (act === "exit") { hideTitle(); showMenu(); } // EXIT -> menu chapitres (debug)

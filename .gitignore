@@ -1,81 +1,60 @@
-﻿# Dépendances / build
+# ============================================================================
+# LuckEngine-Web — .gitignore
+# ----------------------------------------------------------------------------
+# IMPORTANT : aucun fichier de jeu (contenu Key/VisualArts) ne doit être versionné.
+# Le joueur fournit SES PROPRES fichiers, extraits de sa copie légale d'AIR.
+# ============================================================================
+
+# --- Fichiers de jeu AIR (copyrightés — JAMAIS sur le dépôt) ---------------
+*.PAK
+*.pak
+*.cz
+*.cz0
+*.cz1
+*.cz2
+*.cz3
+*.cz4
+*.CZ
+*.CZ0
+*.CZ1
+*.CZ2
+*.CZ3
+*.CZ4
+
+# Vidéos (opening, etc.)
+*.webm
+*.mp4
+*.ogv
+*.ogg
+*.wmv
+*.mpg
+*.usm
+*.nwa
+
+# Images / audio extraits du jeu
+*.png
+*.jpg
+*.jpeg
+*.wav
+
+# Dossier où le joueur place ses fichiers de jeu en local
+game/AIR/*
+!game/AIR/PUT_AIR_FILES_HERE.txt
+
+# --- Dépendances & build ----------------------------------------------------
 node_modules/
 dist/
 build/
-.cache/
-.vite/
-.next/
-out/
+*.zip
 
-# Logs
-*.log
-
-# OS / éditeurs
+# --- Système / éditeurs -----------------------------------------------------
 .DS_Store
 Thumbs.db
+*.log
 .vscode/
 .idea/
+*.swp
 
-# Archives
-*.zip
-*.rar
-*.7z
-*.tar
-*.gz
-
-# Fichiers originaux du jeu / propriétaires
-*.pak
-*.PAK
-*.arc
-*.dat
-*.bin
-*.exe
-*.dll
-*.iso
-*.mdf
-*.mds
-*.cue
-*.ccd
-*.img
-*.sub
-
-# Dossiers de jeu extraits
-game/
-games/
-assets/game/
-public/game/
-public/assets/game/
-public/assets/air/
-public/assets/AIR/
-Extracted_CG/
-Extracted_BGM/
-Extracted_SE/
-Extracted_VOICE/
-CG/
-BGM/
-SE/
-VOICE/
-voice/
-voices/
-bgm/
-sound/
-sounds/
-
-# Médias extraits du jeu
-*.ogg
-*.wav
-*.mp3
-*.flac
-*.m4a
-*.opus
-*.mp4
-*.webm
-*.avi
-*.mkv
-
-# Sauvegardes locales
-saves/
-save/
-local-saves/
-*.sav
-*.save
+# Local proprietary game assets - do not commit
+game/AIR/*
+!game/AIR/PUT_AIR_FILES_HERE.txt

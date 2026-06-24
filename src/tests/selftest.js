@@ -230,19 +230,12 @@ vm.setExprEvaluator((expr) => (expr === "flag==1" ? true : null));
 await vm.run();
 
 // GOTO -> IFN ; IFN(true) ne saute pas (jump-if-false) -> MESSAGE, SELECT, WAIT, END
-<<<<<<< HEAD
 // WAIT a désormais son propre handler (non fourni ici) -> n'émet aucun événement.
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
 eq(
   events,
   [
     ["message", "\u3053\u3093\u306b\u3061\u306f"],
     ["select", "\u306f\u3044"],
-<<<<<<< HEAD
-=======
-    ["debug", "WAIT"],
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
     ["debug", "END"],
   ],
   "séquence d'événements VM (GOTO+IFN exercés, END non terminal)"
