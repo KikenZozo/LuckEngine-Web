@@ -10,5 +10,5 @@
     "parse:script8": "node ./src/tests/testParseScript.js ./scripts/8.bin",
     "serve": "node --version >/dev/null && python3 -m http.server 8080"
   },
-  "license": "UNLICENSED"
+  "license": "MIT"
 }

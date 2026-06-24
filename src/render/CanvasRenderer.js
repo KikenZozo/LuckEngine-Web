@@ -9,11 +9,22 @@
 export class CanvasRenderer {
   constructor(canvas) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext("2d");
+    this.ctx = canvas.getContext("2d", { willReadFrequently: true });
     this.smoothing = true; // diagnostic : lissage activé par défaut (touche S)
     this.uiSkin = null;
   }
   setUiSkin(skin) { this.uiSkin = skin || null; }
+
+  // Dessine UNE frame de la plume animée (MWIN_CURSOR = 4 frames empilées),
+  // avec un léger décalage vertical `dy` pour un battement fluide.
+  _drawCursorFrame(frameIndex, dy = 0) {
+    const c = this._cursorBox;
+    if (!c) return;
+    const { ctx } = this;
+    const srcY = (frameIndex % c.frames) * c.fh;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(c.img.bitmap, 0, srcY, c.fw, c.fh, c.x, c.baseY + dy, c.w, c.h);
+  }
 
   clear() {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -88,8 +99,28 @@ export class CanvasRenderer {
         textY += fs * 1.4;
       }
       if (skin.mwinCursor) {
-        const cw = skin.mwinCursor.w * 0.4, chh = skin.mwinCursor.h * 0.4;
-        ctx.drawImage(skin.mwinCursor.bitmap, inX + inW - cw, inTop + inH - chh, cw, chh);
+        // Plume animée : MWIN_CURSOR contient 4 frames empilées. On mémorise la
+        // zone de dessin pour que la boucle d'animation n'y redessine que la plume.
+        const frames = skin.mwinCursor.frames || 1;
+        const fw = skin.mwinCursor.w;
+        const fh = skin.mwinCursor.h / frames;
+        const scale = 0.7;
+        const cw = fw * scale, chh = fh * scale;
+        const cx = inX + inW - cw - 6;
+        const cy = inTop + inH - chh - 4;
+        this._cursorBox = { img: skin.mwinCursor, fw, fh, frames, x: cx, y: cy, w: cw, h: chh, baseY: cy };
+        // capture une photo propre de la zone (fenêtre sans plume) pour l'effacement
+        // pendant l'animation, sans avoir à redessiner toute la scène.
+        try {
+          const pad = 10;
+          const bx = Math.max(0, cx - pad), by = Math.max(0, cy - pad);
+          const bw = cw + pad * 2, bh = chh + pad * 2;
+          this._cursorBox.clean = ctx.getImageData(bx, by, bw, bh);
+          this._cursorBox.cleanX = bx; this._cursorBox.cleanY = by;
+        } catch { this._cursorBox.clean = null; }
+        this._drawCursorFrame(0, 0);
+      } else {
+        this._cursorBox = null;
       }
       return;
     }
@@ -128,28 +159,30 @@ export class CanvasRenderer {
     // on n'en découpe qu'UNE (skin.selwin.band) par bouton.
     if (skin && skin.selwin && skin.selwin.band) {
       const img = skin.selwin;
-      const srcY = img.band.y0 * img.h;
+      // Boutons plus compacts (largeur réduite) et un peu plus épais que la bande
+      // native, pour coller au rendu du jeu et limiter le bleu vide autour du texte.
+      const bw = canvas.width * 0.50;              // moins large
       const srcH = (img.band.y1 - img.band.y0) * img.h;
-      const ratio = srcH / img.w;                  // proportion de la bande
-      const bw = canvas.width * 0.62;
-      const bh = bw * ratio;
-      const gap = bh * 0.45;
+      const ratio = srcH / img.w;
+      const bh = Math.max(bw * ratio * 1.4, canvas.height * 0.075); // plus épais
+      const gap = bh * 0.55;
       const totalH = choices.length * bh + (choices.length - 1) * gap;
       let y = (canvas.height - totalH) / 2;
       const x = (canvas.width - bw) / 2;
       ctx.imageSmoothingEnabled = this.smoothing;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      const fs = Math.round(bh * 0.5);
+      const fs = Math.round(bh * 0.42);
       choices.forEach((c, i) => {
         const src = (i === selectedIndex && skin.selwinSel) ? skin.selwinSel : img;
         const sy = src.band ? src.band.y0 * src.h : 0;
         const sh = src.band ? (src.band.y1 - src.band.y0) * src.h : src.h;
-        // découpe source (0,sy,w,sh) -> destination (x,y,bw,bh)
         ctx.drawImage(src.bitmap, 0, sy, src.w, sh, x, y, bw, bh);
         ctx.fillStyle = "#fff";
-        ctx.font = `${fs}px system-ui, sans-serif`;
+        ctx.font = `${fs}px 'Trebuchet MS', system-ui, sans-serif`;
+        ctx.shadowColor = "rgba(0,0,0,0.4)"; ctx.shadowBlur = 3;
         ctx.fillText(c, canvas.width / 2, y + bh / 2);
+        ctx.shadowBlur = 0;
         this._choiceRects.push({ i, x, y, w: bw, h: bh });
         y += bh + gap;
       });
@@ -214,12 +247,12 @@ export class CanvasRenderer {
     this.ctx.font = "22px system-ui, sans-serif";
     this.ctx.fillText(text, 40, 60);
   }
-<<<<<<< HEAD
 
   /** Texte narratif de cinématique (LOG_BEGIN) : lignes centrées qui s'accumulent
    *  au centre de l'écran, sans fenêtre de dialogue. */
   drawNarration(lines) {
     const { ctx, canvas } = this;
+    this._cursorBox = null; // pas de plume sur la narration cinématique
     const fs = Math.round(canvas.height * 0.045);
     ctx.save();
     ctx.font = `${fs}px 'Trebuchet MS', system-ui, sans-serif`;
@@ -238,6 +271,4 @@ export class CanvasRenderer {
     }
     ctx.restore();
   }
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
 }

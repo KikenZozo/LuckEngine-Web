@@ -45,15 +45,21 @@
     #menubtn { position: fixed; top: 8px; left: 8px; z-index: 6; background: rgba(0,0,0,.55);
       color:#eee; border:1px solid #555; border-radius:4px; padding:4px 10px; cursor:pointer;
       font-family: system-ui, sans-serif; font-size:15px; }
-    .ctrlbtn { background: rgba(0,0,0,.55); color:#eee; border:1px solid #555; border-radius:4px;
-      padding:4px 12px; cursor:pointer; font-family: system-ui, sans-serif; font-size:13px; }
-    .ctrlbtn:hover { background: rgba(0,0,0,.75); }
-    .ctrlbtn.active { background:#b8863b; color:#fff; border-color:#b8863b; }
+    .ctrlbtn { background: rgba(15,20,35,.42); color:#eef2fb; border:none; border-radius:6px;
+      padding:7px 11px; cursor:pointer; font-family:'Trebuchet MS', system-ui, sans-serif; font-size:14px;
+      display:flex; align-items:center; gap:6px; transition:background .12s, color .12s; backdrop-filter:blur(2px); }
+    .ctrlbtn .ci { font-size:16px; line-height:1; opacity:.92; }
+    .ctrlbtn:hover { background: rgba(80,120,210,.6); color:#fff; }
+    .ctrlbtn.active { background:#3a5bd0; color:#fff; }
     .title-btn { background:none; border:none; cursor:pointer; font-size:30px; font-weight:600;
       color:rgba(110,120,140,.65); letter-spacing:1px; padding:2px 4px; transition:color .12s, text-shadow .12s;
       font-family:'Trebuchet MS', system-ui, sans-serif; }
     .title-btn:hover { color:#2f50c8; text-shadow:0 0 8px rgba(90,130,255,.5); }
     .title-btn:disabled { color:rgba(110,120,140,.30); cursor:default; text-shadow:none; }
+    .sysmenu-btn { background:rgba(255,255,255,.08); border:1px solid #59617a; color:#dfe5f1;
+      border-radius:8px; padding:12px 20px; cursor:pointer; font-size:17px; letter-spacing:.5px;
+      font-family:'Trebuchet MS', system-ui, sans-serif; transition:background .12s, border-color .12s; }
+    .sysmenu-btn:hover { background:rgba(90,130,220,.35); border-color:#7a9cff; }
     #menu { position: fixed; inset:0; display:none; background: rgba(10,10,14,.96); z-index:9;
       color:#eee; font-family: system-ui, sans-serif; flex-direction:column; padding:24px; box-sizing:border-box; }
     #menu.show { display:flex; }
@@ -68,18 +74,47 @@
   </style>
 </head>
 <body>
-<<<<<<< HEAD
+  <!-- Options : volume + vitesse de lecture auto -->
+  <div id="optionsmenu" style="display:none; position:absolute; inset:0; z-index:76; background:rgba(20,24,34,.9); font-family:'Trebuchet MS', system-ui, sans-serif;">
+    <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); display:flex; flex-direction:column; gap:22px; min-width:360px; color:#e6ebf5;">
+      <h2 style="margin:0; font-size:24px; letter-spacing:2px; text-align:center;">OPTIONS</h2>
+      <label style="display:flex; flex-direction:column; gap:6px; font-size:15px;">
+        Volume voix <input type="range" id="opt-voice" min="0" max="100" value="100" />
+      </label>
+      <label style="display:flex; flex-direction:column; gap:6px; font-size:15px;">
+        Volume musique (BGM) <input type="range" id="opt-bgm" min="0" max="100" value="80" />
+      </label>
+      <label style="display:flex; flex-direction:column; gap:6px; font-size:15px;">
+        Volume effets (SE) <input type="range" id="opt-se" min="0" max="100" value="90" />
+      </label>
+      <label style="display:flex; flex-direction:column; gap:6px; font-size:15px;">
+        Vitesse lecture auto <input type="range" id="opt-auto" min="1" max="10" value="5" />
+      </label>
+      <button id="opt-close" style="background:rgba(90,130,220,.3); border:1px solid #7a9cff; color:#fff; border-radius:8px; padding:10px; cursor:pointer; font-size:16px;">Fermer</button>
+    </div>
+  </div>
+
+  <!-- Menu système in-game (bouton Menu) : Sauvegarder / Charger / Options / Titre -->
+  <div id="sysmenu" style="display:none; position:absolute; inset:0; z-index:74; background:rgba(20,24,34,.82); font-family:'Trebuchet MS', system-ui, sans-serif;">
+    <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); display:flex; flex-direction:column; gap:14px; min-width:260px;">
+      <h2 style="margin:0 0 8px; color:#eaeef7; font-size:24px; letter-spacing:2px; text-align:center;">MENU</h2>
+      <button class="sysmenu-btn" data-act="resume">Reprendre</button>
+      <button class="sysmenu-btn" data-act="save">Sauvegarder</button>
+      <button class="sysmenu-btn" data-act="load">Charger</button>
+      <button class="sysmenu-btn" data-act="options">Options</button>
+      <button class="sysmenu-btn" data-act="title">Retour au titre</button>
+    </div>
+  </div>
+
   <!-- Menu Save / Load : grille de slots avec vignettes (style AIR) -->
   <div id="savemenu" style="display:none; position:absolute; inset:0; z-index:75; background:rgba(245,245,248,.97); font-family:'Trebuchet MS', system-ui, sans-serif; box-sizing:border-box; padding:30px 40px; overflow:auto;">
     <div style="display:flex; align-items:center; gap:20px; margin-bottom:18px;">
       <h2 id="savemenu-title" style="margin:0; color:#2f3a52; font-size:26px; letter-spacing:1px;">SAUVEGARDER</h2>
       <button id="savemenu-close" style="margin-left:auto; background:none; border:1px solid #8a93a8; color:#39435c; border-radius:6px; padding:6px 16px; cursor:pointer; font-size:15px;">Retour</button>
     </div>
-    <div id="save-grid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:16px;"></div>
+    <div id="save-grid" style="display:grid; grid-template-columns:repeat(4, 1fr); gap:14px;"></div>
   </div>
 
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
   <canvas id="game" width="1280" height="720"></canvas>
 
   <!-- Écran titre (style AIR) : fond title1a + boutons NEW GAME / LOAD / … -->
@@ -111,12 +146,12 @@
     <button data-lang="zh">中文</button>
   </div>
 
-  <!-- Barre de contrôle (provisoire, sera remplacée par les vraies images d'AIR) -->
-  <div id="ctrlbar" style="position:absolute; right:10px; bottom:10px; z-index:40; display:flex; gap:6px; font-size:13px;">
-    <button class="ctrlbtn" id="btn-auto">Auto</button>
-    <button class="ctrlbtn" id="btn-skip">Skip</button>
-    <button class="ctrlbtn" id="btn-voice">Voice</button>
-    <button class="ctrlbtn" id="btn-sysmenu">Menu</button>
+  <!-- Barre de contrôle (style proche du vrai jeu : icône + libellé) -->
+  <div id="ctrlbar" style="position:absolute; right:14px; bottom:14px; z-index:40; display:flex; gap:4px; align-items:center;">
+    <button class="ctrlbtn" id="btn-menu2"><span class="ci">&#9881;</span> Menu</button>
+    <button class="ctrlbtn" id="btn-skip"><span class="ci">&#9197;</span> Skip</button>
+    <button class="ctrlbtn" id="btn-auto"><span class="ci">&#8635;</span> Auto</button>
+    <button class="ctrlbtn" id="btn-voice"><span class="ci">&#128266;</span> Voice</button>
   </div>
 
   <div id="import">

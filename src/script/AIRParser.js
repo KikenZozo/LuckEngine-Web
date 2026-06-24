@@ -122,7 +122,6 @@ export function parseAIRInstruction(code) {
           jump: r.readUint32()
         };
 
-<<<<<<< HEAD
       case "LOG_BEGIN": {
         // Texte narratif de cinématique (ex intro "My child…"). Même structure
         // de chaînes que MESSAGE : un u16 puis jp / en / zh.
@@ -137,8 +136,6 @@ export function parseAIRInstruction(code) {
         return out;
       }
 
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
       case "MESSAGE": {
         const unk = r.readUint16();
         const jp = r.readLenStringUTF16LE();
@@ -203,20 +200,6 @@ export function parseAIRInstruction(code) {
         }
 
         const out = { op, a, b, c, d, varId: a, jp, en, zh, text: jp, choices };
-        if (r.remaining() > 0) out.tail = [...r.readBytes(r.remaining())];
-        return out;
-      }
-
-      case "LOG_BEGIN": {
-        const a = r.readUint8();
-        const b = r.readUint8();
-        const c = r.readUint8();
-        const jp = r.readLenStringUTF16LE();
-        const out = { op, a, b, c, jp, text: jp };
-        if (jp.length > 0 && r.canRead(2)) {
-          out.en = r.readLenStringUTF16LE();
-          if (r.canRead(2)) out.zh = r.readLenStringUTF16LE();
-        }
         if (r.remaining() > 0) out.tail = [...r.readBytes(r.remaining())];
         return out;
       }

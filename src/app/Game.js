@@ -14,10 +14,7 @@ import { evalExprValue } from "../vm/ExprEval.js";
 import { decodeCZ } from "../image/czimage.js";
 import { spriteKey } from "./charcgKeys.js";
 import { AudioManager } from "../audio/AudioManager.js";
-<<<<<<< HEAD
 import { SaveManager } from "../save/SaveManager.js";
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
 
 export class Game {
   constructor(renderer, opts = {}) {
@@ -28,12 +25,17 @@ export class Game {
     this._advance = null;
     this._choose = null;
     this.audio = new AudioManager();
-<<<<<<< HEAD
     this.saves = new SaveManager();
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
     this.movies = new Map(); // nom de fichier -> ArrayBuffer (vidéos opening…)
+    // Logs de debug : silencieux par défaut, activable via game.debug = true
+    // ou en ajoutant ?debug à l'URL. Garde la console propre pour le joueur.
+    this.debug = (() => {
+      try { return /[?&]debug\b/.test(location.search); } catch { return false; }
+    })();
   }
+
+  // Log de diagnostic conditionnel (n'affiche que si this.debug est activé).
+  dbg(...args) { if (this.debug) console.log(...args); }
 
   /** Enregistre une vidéo importée (AIR_OP_A.webm…) par son nom de fichier. */
   addMovie(name, arrayBuffer) {
@@ -198,7 +200,7 @@ export class Game {
       w: img.width, h: img.height,
       canvasW: img.canvasW || 1280, canvasH: img.canvasH || 720,
     };
-    console.log(`MÉDAILLON "${name}" [${img.width}x${img.height}] off(${img.offsetX || 0},${img.offsetY || 0})`);
+    this.dbg(`MÉDAILLON "${name}" [${img.width}x${img.height}] off(${img.offsetX || 0},${img.offsetY || 0})`);
     this._redraw();
   }
 
@@ -266,6 +268,7 @@ export class Game {
     const skin = {};
     skin.mwin = await this._decodeUiImage("MWIN0", true);    // fenêtre de dialogue (+inset)
     skin.mwinCursor = await this._decodeUiImage("MWIN_CURSOR"); // curseur "continuer"
+    if (skin.mwinCursor) skin.mwinCursor.frames = 4; // 4 frames empilées (animation plume)
     skin.selwin = await this._decodeUiImage("SELWIN");        // choix (normal)
     skin.selwinSel = await this._decodeUiImage("SELWIN_s");   // choix (survol)
     // SELWIN contient 3 bandes empilées (3 états du bouton). On n'en affiche
@@ -277,7 +280,7 @@ export class Game {
     this.uiSkin = skin;
     if (this.renderer.setUiSkin) this.renderer.setUiSkin(skin);
     const ok = Object.entries(skin).filter(([, v]) => v).map(([k]) => k);
-    console.log(`UI skin chargée : ${ok.join(", ") || "(aucune image trouvée)"}`);
+    this.dbg(`UI skin chargée : ${ok.join(", ") || "(aucune image trouvée)"}`);
     return skin;
   }
 
@@ -299,16 +302,13 @@ export class Game {
       // carton/décor d'avant reste collé).
       this.currentBg = { solid: "#000000" };
       this._currentBgId = imgId;
-<<<<<<< HEAD
       this._currentBgName = null;
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
       this.sprites = new Map();
       this.eventExprs = [];
       this._inEventCG = false;
       this.bgOverlays = new Map();
       this._currentBgNum = null;
-      console.log(`IMAGELOAD ${imgId} = fond noir spécial`);
+      this.dbg(`IMAGELOAD ${imgId} = fond noir spécial`);
       return;
     }
     const img = decodeCZ(found.bytes);
@@ -317,7 +317,7 @@ export class Game {
         `"${String.fromCharCode(found.bytes[0], found.bytes[1], found.bytes[2])}" non géré ?`);
       return;
     }
-    console.log(`IMAGELOAD ${imgId} -> ${found.from} [${img.format} ${img.width}x${img.height}]`);
+    this.dbg(`IMAGELOAD ${imgId} -> ${found.from} [${img.format} ${img.width}x${img.height}]`);
     // Carton de date plein écran "day_MDD" (ex day_719 = 19 juil) : dans le vrai
     // jeu il n'est PAS posé comme fond persistant — c'est le MÉDAILLON compact
     // (jul_/aug_) qui s'affiche en haut à gauche. On met donc à jour le médaillon
@@ -343,19 +343,44 @@ export class Game {
         if (!isEventBase) {
           // petit -> expression positionnée, EMPILÉE sur la base EVENTCG (plusieurs
           // peuvent coexister : fgmp02 papier + fgmp03/04/05 détails = note complète).
+          // Cas base manquante : une expression "...b/c/d" (ex fgka02b) doit se
+          // poser sur sa base "...a" (fgka02a). Si cette base n'est pas affichée
+          // (changement de scène, transition…), on la charge d'abord.
+          const baseName = this._eventBaseName(nm);
+          if (baseName && this._currentBgName !== baseName) {
+            const bf = this._imageBytesByName(baseName);
+            if (!bf) console.warn(`  [EVENTCG] base "${baseName}" introuvable (pour "${nm}")`);
+            if (bf) {
+              try {
+                const bimg = decodeCZ(bf.bytes);
+                if (bimg) {
+                  const bbitmap = typeof createImageBitmap === "function"
+                    ? await createImageBitmap(new ImageData(new Uint8ClampedArray(bimg.rgba), bimg.width, bimg.height))
+                    : { rgba: bimg.rgba, width: bimg.width, height: bimg.height };
+                  this.currentBg = bbitmap;
+                  this._currentBgName = baseName;
+                  this.eventExprs = [];        // repart d'une base propre
+                  this.bgOverlays = new Map();
+                  this.sprites = new Map();
+                  this.dbg(`EVENTCG base auto "${baseName}" (pour l'expression "${nm}")`);
+                }
+              } catch {}
+            }
+          }
           this._addEventExpr({
             bitmap, ox: img.offsetX || 0, oy: img.offsetY || 0,
             w: img.width, h: img.height,
             canvasW: img.canvasW || 1280, canvasH: img.canvasH || 960,
           });
-          console.log(`EVENTCG expr "${nm}" [${img.width}x${img.height}] off(${img.offsetX || 0},${img.offsetY || 0}) -> empilée (${this.eventExprs.length})`);
+          this.dbg(`EVENTCG expr "${nm}" [${img.width}x${img.height}] off(${img.offsetX || 0},${img.offsetY || 0}) -> empilée (${this.eventExprs.length})`);
         } else {
           // plein cadre -> base (nouvelle scène CG)
           if (imgId !== this._currentBgId) { this.sprites = new Map(); this._currentBgId = imgId; }
           this.currentBg = bitmap;
+          this._currentBgName = nm;
           this.eventExprs = [];
           this.bgOverlays = new Map();
-          console.log(`EVENTCG base "${nm}" [${img.width}x${img.height}] off(${img.offsetX || 0},${img.offsetY || 0}) canvas(${img.canvasW || 0}x${img.canvasH || 0}) -> nouvelle base`);
+          this.dbg(`EVENTCG base "${nm}" [${img.width}x${img.height}] off(${img.offsetX || 0},${img.offsetY || 0}) canvas(${img.canvasW || 0}x${img.canvasH || 0}) -> nouvelle base`);
         }
         this._inEventCG = true; // on est dans une illustration EVENTCG -> pas de sprites
         return;
@@ -374,14 +399,11 @@ export class Game {
           this._currentBgId = imgId;
         }
         this.currentBg = bitmap;
-<<<<<<< HEAD
         this._currentBgName = found.name;
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
         this.eventExprs = []; // on quitte un éventuel EVENTCG
         this._inEventCG = false; // scène BGCG normale -> sprites autorisés
         this._currentBgNum = bgNum;
-        console.log(`BGCG base "${found.name}" (#${imgId}, famille ${bgNum})`);
+        this.dbg(`BGCG base "${found.name}" (#${imgId}, famille ${bgNum})`);
         // on ne garde que les expressions de CETTE famille ; celles d'autres
         // scènes (enfants restés collés…) sont jetées.
         if (this.bgOverlays) {
@@ -390,7 +412,6 @@ export class Game {
           );
         }
       } else {
-<<<<<<< HEAD
         // expression : positionnée par l'offset CZ, sur le fond, liée à sa base.
         // Cas porte/fenêtre "open" (ex bg007n1o) : le calque OUVERT doit se poser
         // sur sa base FERMÉE plein écran (bg007n1c). Si cette base n'est pas le
@@ -398,6 +419,7 @@ export class Game {
         const baseName = this._closedBaseName(found.name);
         if (baseName && this._currentBgName !== baseName) {
           const baseFound = this._imageBytesByName(baseName);
+          if (!baseFound) console.warn(`  [expr] base "${baseName}" INTROUVABLE dans les PAK`);
           if (baseFound) {
             try {
               const bimg = decodeCZ(baseFound.bytes);
@@ -409,22 +431,19 @@ export class Game {
                 this._currentBgName = baseName;
                 this._currentBgNum = bgNum;
                 this._inEventCG = false;
-                console.log(`BGCG base auto "${baseName}" (pour l'expression "${found.name}")`);
+                this.dbg(`BGCG base auto "${baseName}" (pour l'expression "${found.name}")`);
               }
             } catch {}
           }
         }
-=======
-        // expression : positionnée par l'offset CZ, sur le fond, liée à sa base
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
         if (!this.bgOverlays) this.bgOverlays = new Map();
         this.bgOverlays.set(imgId, {
           bitmap, ox: img.offsetX || 0, oy: img.offsetY || 0,
           w: img.width, h: img.height,
           canvasW: img.canvasW || 1280, canvasH: img.canvasH || 720,
-          num: bgNum,
+          num: bgNum, name: found.name,
         });
-        console.log(`BGCG expr "${found.name}" (#${imgId}, base ${bgNum}) -> overlay lié`);
+        this.dbg(`BGCG expr "${found.name}" (#${imgId}, base ${bgNum}) -> overlay lié`);
       }
       // pas de rendu ici : on compose seulement à l'affichage (message/DRAW)
     } catch (e) {
@@ -456,7 +475,16 @@ export class Game {
     return m ? parseInt(m[1], 10) : null;
   }
 
-<<<<<<< HEAD
+  // Déduit le nom de la BASE (plein écran) d'une expression EVENTCG. Convention
+  // AIR : la base finit par "a", les expressions par "b"/"c"/"d"/"e"
+  // (ex fgka02b -> fgka02a, fgka08c -> fgka08a). Renvoie null si déjà une base.
+  _eventBaseName(name) {
+    if (!name) return null;
+    const m = String(name).match(/^(.*?)([b-z])$/i);
+    if (!m || m[2].toLowerCase() === "a") return null;
+    return m[1] + "a";
+  }
+
   // Déduit le nom de la BASE fermée (plein écran) à partir d'une expression
   // "ouverte". Convention AIR : le calque open finit par "o", la base par "c"
   // (ex bg007n1o -> bg007n1c, bg007o -> bg007c, bg007yo -> bg007yc).
@@ -466,8 +494,6 @@ export class Game {
     return name.slice(0, -1) + "c";
   }
 
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
   // Sprite de personnage (IMAGELOAD mode != 0). ins = {imgId, mode, var1, x, y}.
   async _loadSprite(ins) {
     if (!this.imagePaks || !this.imagePaks.length) return;
@@ -511,7 +537,7 @@ export class Game {
       ox = (ins.x || 0) - img.width / 2;
       oy = (ins.y || 0) - img.height;
     }
-    console.log(`SPRITE ${ins.imgId} -> ${found.from} [${img.width}x${img.height}] ` +
+    this.dbg(`SPRITE ${ins.imgId} -> ${found.from} [${img.width}x${img.height}] ` +
       `off(${ox},${oy}) pos(${ins.x},${ins.y}) mode=${ins.mode} var1=${ins.var1} -> ${isBase ? "BASE" : "expression"}`);
     try {
       const bitmap = typeof createImageBitmap === "function"
@@ -610,6 +636,41 @@ export class Game {
   // Repeint la base : fond, puis chaque perso. Le placement est calculé ICI
   // avec le cadre de la BASE, donc l'ordre de chargement n'a pas d'importance.
   // Un visage n'est JAMAIS dessiné sans sa base (pas de visage flottant).
+  // Transition fluide (fondu) entre l'écran courant et le nouveau décor.
+  // Capture l'image actuelle du canvas, dessine la nouvelle scène, puis fait
+  // un cross-fade en animant l'opacité — au lieu d'un changement brutal/noir.
+  async _fadeTransition(duration = 280) {
+    const r = this.renderer;
+    const cv = r.canvas;
+    let prev = null;
+    try {
+      prev = document.createElement("canvas");
+      prev.width = cv.width; prev.height = cv.height;
+      prev.getContext("2d").drawImage(cv, 0, 0); // photo de l'écran AVANT
+    } catch { prev = null; }
+    this._renderBase(); // dessine le nouveau décor
+    if (!prev) return;
+    let after = null;
+    try {
+      after = document.createElement("canvas");
+      after.width = cv.width; after.height = cv.height;
+      after.getContext("2d").drawImage(cv, 0, 0); // photo de l'écran APRÈS
+    } catch { return; }
+    const start = performance.now();
+    await new Promise((res) => {
+      const step = (now) => {
+        const t = Math.min(1, (now - start) / duration);
+        r.clear();
+        r.ctx.globalAlpha = 1; r.ctx.drawImage(prev, 0, 0);   // ancien dessous
+        r.ctx.globalAlpha = t; r.ctx.drawImage(after, 0, 0);  // nouveau qui apparaît
+        r.ctx.globalAlpha = 1;
+        if (t < 1) requestAnimationFrame(step);
+        else { this._renderBase(); res(); }
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
   _renderBase() {
     this.renderer.clear();
     const cw = this.renderer.canvas.width;
@@ -676,6 +737,7 @@ export class Game {
 
   advance() {
     this._clearAutoTimer();
+    this._stopCursorAnim();
     if (this._advance) {
       const r = this._advance;
       this._advance = null;
@@ -686,17 +748,45 @@ export class Game {
   // Attente d'avancement d'un MESSAGE : clic normal, ou résolution auto si Auto
   // (après un délai) ou Skip (quasi immédiat) sont actifs.
   _waitAdvance() {
+    this._startCursorAnim();
     return new Promise((res) => {
-      this._advance = res;
+      this._advance = () => { this._stopCursorAnim(); res(); };
       if (this.skipMode) {
         this._autoTimer = setTimeout(() => this.advance(), 30); // Skip : très rapide
       } else if (this.autoMode) {
-        // Auto : délai proportionnel à la longueur du texte (lecture confortable)
+        // Auto : délai proportionnel à la longueur du texte, modulé par la vitesse
+        // choisie dans les Options (autoSpeed 1..10, 5 = normal ; plus haut = plus rapide).
         const txt = (this._cur && this._cur.ins && this._pick(this._cur.ins)) || "";
-        const delay = Math.min(6000, 1200 + txt.length * 45);
+        const speed = this.autoSpeed || 5;
+        const factor = 11 - speed; // 1->10 (lent), 10->1 (rapide)
+        const delay = Math.min(8000, (400 + txt.length * 18) * factor / 5);
         this._autoTimer = setTimeout(() => this.advance(), delay);
       }
     });
+  }
+
+  // Animation de la plume (curseur "continuer") : cycle les 4 frames + léger
+  // battement vertical sinusoïdal. Ne redessine QUE la zone de la plume.
+  _startCursorAnim() {
+    this._stopCursorAnim();
+    const r = this.renderer;
+    if (!r._cursorBox || !r._cursorBox.clean) return; // pas de plume / pas de fond propre
+    const start = performance.now();
+    const loop = (now) => {
+      const c = r._cursorBox;
+      if (!c || !c.clean) return;
+      const t = (now - start) / 1000;
+      const frame = Math.floor(t * 6) % c.frames;       // ~6 fps de cycle de frames
+      const dy = Math.sin(t * 2.6) * 3;                  // battement vertical doux
+      // restaure le fond propre (efface l'ancienne plume sans carré noir)
+      try { r.ctx.putImageData(c.clean, c.cleanX, c.cleanY); } catch {}
+      r._drawCursorFrame(frame, dy);
+      this._cursorRAF = requestAnimationFrame(loop);
+    };
+    this._cursorRAF = requestAnimationFrame(loop);
+  }
+  _stopCursorAnim() {
+    if (this._cursorRAF) { cancelAnimationFrame(this._cursorRAF); this._cursorRAF = null; }
   }
 
   // Annule un timer auto/skip en cours (au clic manuel, changement de mode…)
@@ -751,7 +841,7 @@ export class Game {
     if (getComputedStyle(host).position === "static") host.style.position = "relative";
     host.appendChild(video);
 
-    console.log(`MOVIE "${baseName}" -> lecture`);
+    this.dbg(`MOVIE "${baseName}" -> lecture`);
     await new Promise((resolve) => {
       let done = false;
       const finish = () => {
@@ -812,10 +902,66 @@ export class Game {
 
   choose(i) {
     if (this._choose) {
+      this._playConfirmSe();   // son de validation du choix
       const r = this._choose;
       this._choose = null;
       r(i);
     }
+  }
+
+  // Son de confirmation (clic sur un choix) : deux tons brefs, un peu plus marqué
+  // que le survol, pour signaler la validation.
+  _playConfirmSe() {
+    try {
+      const ctx = this.audio && this.audio.ctx;
+      if (!ctx) return;
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(740, now);
+      osc.frequency.exponentialRampToValueAtTime(1180, now + 0.06);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.07, now + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+      osc.connect(gain);
+      gain.connect(this.audio.gain.se || ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.18);
+    } catch {}
+  }
+
+  // Survol d'un choix : si l'index change, redessine la barre survolée en SELWIN_s
+  // et joue un petit son de sélection (feedback comme le vrai jeu).
+  hoverChoice(i) {
+    if (!this._activeChoices) return;       // pas en train de choisir
+    if (i === this._hoverChoice) return;    // pas de changement
+    this._hoverChoice = i;
+    this._renderBase();
+    this.renderer.drawChoices(this._activeChoices, i);
+    if (i >= 0) this._playSelectSe();       // son au survol d'un choix
+  }
+
+  // Petit son de survol d'un choix : un "tick" doux synthétisé via Web Audio
+  // (pas besoin d'un fichier SE système). Discret et toujours disponible.
+  _playSelectSe() {
+    try {
+      const ctx = this.audio && this.audio.ctx;
+      if (!ctx) return;
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";                              // plus doux qu'une sinus pure
+      osc.frequency.setValueAtTime(660, now);             // tick discret, médium
+      osc.frequency.exponentialRampToValueAtTime(990, now + 0.03);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.05, now + 0.008); // attaque douce, volume bas
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09); // extinction rapide
+      osc.connect(gain);
+      gain.connect(this.audio.gain.se || ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.10);
+    } catch {}
   }
 
   /** @param {number|string} ref index ou nom d'entrée (ex: "seen0000") */
@@ -851,11 +997,8 @@ export class Game {
       entryName = e ? e.name : String(index);
     }
     this.vars = {};
-<<<<<<< HEAD
     // Si on charge une sauvegarde : restaurer les variables capturées.
     if (this._pendingVars) { this.vars = { ...this._pendingVars }; this._pendingVars = null; }
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
     this.currentBg = null;
     this._currentBgId = null;
     this.bgOverlays = new Map();
@@ -886,7 +1029,6 @@ export class Game {
         const m = raw.match(/^@([^@]*)@([\s\S]*)$/);
         const name = m ? m[1] : "";
         const text = m ? m[2] : raw;
-<<<<<<< HEAD
         // Point de sauvegarde courant (stable, au niveau d'un MESSAGE) : on
         // mémorise où on en est pour pouvoir reprendre exactement ici.
         this._savePoint = {
@@ -895,8 +1037,6 @@ export class Game {
           preview: (text || "").slice(0, 60),
           bgId: this._currentBgId,   // pour restaurer le décor au chargement
         };
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
         this._renderBase();
         this.renderer.drawDialogue(name, text);
         await this._waitAdvance();
@@ -906,9 +1046,12 @@ export class Game {
         this._clearAutoTimer();
         this.autoMode = false; this.skipMode = false; // un choix interrompt auto/skip
         const labels = (ins.choices || []).map((ch) => this._pick(ch));
+        this._activeChoices = labels;   // mémorisé pour le survol (hover)
+        this._hoverChoice = -1;
         this._renderBase();
         this.renderer.drawChoices(labels);
         const idx = await new Promise((res) => (this._choose = res));
+        this._activeChoices = null;
         if (ins.varId != null) this.vars["#" + ins.varId] = idx; // SELECT -> #varId
         return idx;
       },
@@ -917,7 +1060,7 @@ export class Game {
         // structure depuis les octets réels (comme on a fait pour IMAGELOAD).
         const watch = ["BASE", "FACE", "DISP", "IMAGEUPDATE", "SWAP", "MASK", "PRIORITY", "UVWH", "SIZE", "MANPU"];
         if (watch.includes(ins.op)) {
-          console.log(`OP ${ins.op}: u16=[${(ins.u16 || []).join(",")}]`);
+          this.dbg(`OP ${ins.op}: u16=[${(ins.u16 || []).join(",")}]`);
         }
         // Opcodes de variable/flag : on extrait les chaînes ASCII (ex "#6001=1")
         // des octets bruts, pour reverse leur format et brancher l'exécution.
@@ -927,7 +1070,6 @@ export class Game {
         // this.vars pour que les conditions IFN/IFY s'évaluent correctement.
         if (ins.op === "EQUN" && ins.u16 && ins.u16.length >= 2) {
           this.vars["#" + ins.u16[0]] = ins.u16[1];
-<<<<<<< HEAD
           // 8001 = id de l'image de FOND de base de la scène. Le jeu compose
           // base(8001) + expression(8002). Notre classement par taille se trompe
           // pour les bases petites (ex bg007n1o 448x664 = base via 8001). Quand
@@ -938,15 +1080,22 @@ export class Game {
             const id = ins.u16[1];
             if (id && id !== 65000 && id !== 65001 && this.bgOverlays && this.bgOverlays.has(id)) {
               const ov = this.bgOverlays.get(id);
-              this.currentBg = ov.bitmap;          // étirée plein cadre par drawBackground
-              this._currentBgId = id;
-              this._currentBgNum = ov.num;
-              this.bgOverlays.delete(id);          // ce n'était pas un overlay : c'est la base
-              console.log(`BGCG base (via 8001) #${id} -> promue en fond`);
+              // NE PAS promouvoir une expression "open" (bg007n1o…) : elle a déjà
+              // sa base fermée chargée par _closedBaseName, et la promouvoir
+              // étirerait le petit calque (448x664) en plein écran. On ne promeut
+              // que les vraies bases mal classées (sans base "...c" associée).
+              const isOpenExpr = ov.name && /o$/i.test(ov.name) && this._imageBytesByName(this._closedBaseName(ov.name));
+              if (!isOpenExpr) {
+                this.currentBg = ov.bitmap;          // étirée plein cadre par drawBackground
+                this._currentBgId = id;
+                this._currentBgNum = ov.num;
+                this.bgOverlays.delete(id);          // ce n'était pas un overlay : c'est la base
+                this.dbg(`BGCG base (via 8001) #${id} -> promue en fond`);
+              } else {
+                this.dbg(`BGCG (via 8001) #${id} = expression open, base déjà chargée -> pas de promotion`);
+              }
             }
           }
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
         }
         if (flagOps.includes(ins.op) && ins.raw) {
           const strs = [];
@@ -956,7 +1105,7 @@ export class Game {
             else { if (cur.length >= 2) strs.push(cur); cur = ""; }
           }
           if (cur.length >= 2) strs.push(cur);
-          console.log(`FLAG ${ins.op}: strings=${JSON.stringify(strs)} u16=[${(ins.u16 || []).join(",")}]`);
+          this.dbg(`FLAG ${ins.op}: strings=${JSON.stringify(strs)} u16=[${(ins.u16 || []).join(",")}]`);
         }
         // Opcodes AUDIO : on reverse leurs paramètres (chaînes + u16) ET on tente
         // la lecture en best-effort (id = 1er u16) depuis voice.PAK / SE.PAK / BGM.
@@ -972,7 +1121,7 @@ export class Game {
           }
           if (cur.length >= 2) strs.push(cur);
           const u16 = ins.u16 || [];
-          console.log(`AUDIO-OP ${ins.op}: strings=${JSON.stringify(strs)} u16=[${u16.join(",")}]`);
+          this.dbg(`AUDIO-OP ${ins.op}: strings=${JSON.stringify(strs)} u16=[${u16.join(",")}]`);
           try {
             const idScript = u16[0] || 0;
             if (ins.op === "VOICE_STOP") {
@@ -983,24 +1132,24 @@ export class Game {
               this.audio.stopBgm();
             } else if (ins.op === "SE" || ins.op === "SE_WAIT") {
               const r = this._resolveSe(idScript, u16[2]);
-              if (!r) { console.log(`  SE id=${idScript}: aucun PAK SE / hors plage`); }
-              else if (r.stop) { this.audio.stopSe(); console.log("  SE: stop"); }
+              if (!r) { this.dbg(`  SE id=${idScript}: aucun PAK SE / hors plage`); }
+              else if (r.stop) { this.audio.stopSe(); this.dbg("  SE: stop"); }
               else if (r.fmt === "inconnu" || r.fmt.startsWith("riff:")) {
                 const hex = [...r.bytes.slice(0, 12)].map((x) => x.toString(16).padStart(2, "0")).join(" ");
                 console.warn(`  SE -> ${r.from} format "${r.fmt}" NON décodable (octets: ${hex})`);
               } else {
-                console.log(`  SE -> ${r.from} [${r.fmt}]${r.loop ? " (boucle)" : ""}`);
+                this.dbg(`  SE -> ${r.from} [${r.fmt}]${r.loop ? " (boucle)" : ""}`);
                 this.audio.playSe(r.bytes, r.from, r.loop);
               }
             } else if (ins.op === "BGM" || ins.op === "BGM_WAIT_START" || ins.op === "BGM_WAIT_FADE") {
               const r = this._resolveBgm(idScript);
-              if (!r) { console.log(`  BGM id=${idScript}: aucun BGM.PAK importé`); }
-              else if (r.stop) { this.audio.stopBgm(); console.log("  BGM: stop/fondu"); }
+              if (!r) { this.dbg(`  BGM id=${idScript}: aucun BGM.PAK importé`); }
+              else if (r.stop) { this.audio.stopBgm(); this.dbg("  BGM: stop/fondu"); }
               else if (r.fmt === "inconnu" || r.fmt.startsWith("riff:")) {
                 const hex = [...r.bytes.slice(0, 12)].map((x) => x.toString(16).padStart(2, "0")).join(" ");
                 console.warn(`  BGM -> ${r.from} format "${r.fmt}" NON décodable (octets: ${hex})`);
               } else {
-                console.log(`  BGM -> ${r.from} [${r.fmt}] (boucle)`);
+                this.dbg(`  BGM -> ${r.from} [${r.fmt}] (boucle)`);
                 this.audio.playBgm(r.bytes, r.from);
               }
             }
@@ -1018,7 +1167,6 @@ export class Game {
       movie: async (ins) => {
         await this._playMovie(ins.file);
       },
-<<<<<<< HEAD
       // WAIT(n) : pause auto de ~n unités (≈16ms/unité), puis continue seul.
       // WAIT() : attend un clic du joueur. Pendant un WAIT auto, un clic abrège.
       wait: async (ins) => {
@@ -1031,6 +1179,18 @@ export class Game {
           });
         } else {
           await this._waitAdvance(); // WAIT() = clic (respecte aussi auto/skip)
+        }
+      },
+      // FADE : marque qu'un fondu est demandé pour le prochain HAIKEI_SET.
+      fade: async () => { this._pendingFade = true; },
+      // HAIKEI_SET : applique le décor courant. Si un FADE a été demandé, on
+      // fait une transition fluide (fondu) au lieu d'un changement brutal.
+      haikeiSet: async () => {
+        if (this._pendingFade) {
+          this._pendingFade = false;
+          await this._fadeTransition();
+        } else {
+          this._renderBase();
         }
       },
       // LOG_BEGIN : texte narratif de cinématique, centré, qui s'ACCUMULE à
@@ -1046,8 +1206,6 @@ export class Game {
         this._logLines = [];
         this._renderBase();
       },
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
     });
 
     // évaluateur branché sur le store de variables
@@ -1055,7 +1213,6 @@ export class Game {
     // continuité inter-seen : la VM peut suivre JUMP/FARCALL vers d'autres seen
     vm.scriptName = entryName;
     vm.setScriptLoader((name) => this._codesFor(name));
-<<<<<<< HEAD
     this._vm = vm; // référence pour snapshot/restore (sauvegarde)
 
     // Restauration éventuelle d'une sauvegarde (position dans le script).
@@ -1078,14 +1235,11 @@ export class Game {
       try { await this._loadBackground(this._pendingBgId); } catch {}
       this._pendingBgId = null;
     }
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
 
     await vm.run();
     this.renderer.clear();
     this.renderer.drawDialogue("", "[fin du script]");
   }
-<<<<<<< HEAD
 
   // ---- Sauvegarde / chargement (slots multi avec vignette) -----------------
 
@@ -1146,7 +1300,7 @@ export class Game {
   async loadFromSlot(slot) {
     const rec = await this.saves.get(slot);
     if (!rec) throw new Error("Slot vide");
-    console.log(`LOAD slot ${slot}: seen=${rec.state?.scriptName} pos=${rec.state?.pos} bgId=${rec.bgId} vars=${Object.keys(rec.vars || {}).length}`);
+    this.dbg(`LOAD slot ${slot}: seen=${rec.state?.scriptName} pos=${rec.state?.pos} bgId=${rec.bgId} vars=${Object.keys(rec.vars || {}).length}`);
     this._pendingRestore = rec.state;
     this._pendingVars = { ...(rec.vars || {}) };
     this._pendingBgId = rec.bgId || null;
@@ -1156,6 +1310,4 @@ export class Game {
 
   async listSaves() { return this.saves.list(); }
   async deleteSave(slot) { return this.saves.remove(slot); }
-=======
->>>>>>> b5f05467b54fe6d8bb590c7f6a4856e34cae41e7
 }

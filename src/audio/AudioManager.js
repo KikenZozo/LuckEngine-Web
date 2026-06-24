@@ -39,6 +39,27 @@ export class AudioManager {
 
   setVolume(channel, v) { if (this.gain[channel]) this.gain[channel].gain.value = v; }
 
+  // Petit son de survol de menu (bip doux synthétique). Ne dépend d'aucun asset :
+  // un court sinus avec enveloppe rapide, joué sur le canal SE.
+  playCursorBlip() {
+    try {
+      const ctx = this._ensure();
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.exponentialRampToValueAtTime(1320, now + 0.04);
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(0.12, now + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+      osc.connect(g);
+      g.connect(this.gain.se || ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.14);
+    } catch {}
+  }
+
   _detect(b) {
     const s = (i, n) => { let r = ""; for (let k = 0; k < n; k++) r += String.fromCharCode(b[i + k] || 0); return r; };
     if (s(0, 4) === "OggS") return "ogg";
