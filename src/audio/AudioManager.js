@@ -39,6 +39,29 @@ export class AudioManager {
 
   setVolume(channel, v) { if (this.gain[channel]) this.gain[channel].gain.value = v; }
 
+  // ---- Sons système (SYSSE.PAK) ---------------------------------------------
+  // Les vrais bips d'interface du jeu : CURSOR (survol), ENTER (validation),
+  // CANCEL (retour), INVALID (action interdite), TOGGLE, PAGE… On garde les
+  // octets bruts (Ogg) et on décode paresseusement au 1er usage (après le geste
+  // utilisateur qui débloque l'AudioContext), puis on met en cache.
+  registerSystemSounds(map) { this._sysBytes = map || {}; }
+  hasSystem(name) { return !!(this._sysBytes && this._sysBytes[String(name).toUpperCase()]); }
+
+  /** Joue un son système nommé sur le canal SE (one-shot, n'interrompt rien). */
+  async playSystem(name) {
+    const key = String(name).toUpperCase();
+    if (!this._sysBytes || !this._sysBytes[key]) return false;
+    try {
+      const ctx = this._ensure();
+      const buf = await this._decode(this._sysBytes[key], "sys:" + key);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(this.gain.se || ctx.destination);
+      src.start(0);
+      return true;
+    } catch { return false; }
+  }
+
   // Petit son de survol de menu (bip doux synthétique). Ne dépend d'aucun asset :
   // un court sinus avec enveloppe rapide, joué sur le canal SE.
   playCursorBlip() {

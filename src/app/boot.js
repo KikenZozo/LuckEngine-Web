@@ -142,12 +142,20 @@ function syncCtrl() {
 
 // Câblage des boutons de contrôle (Auto / Skip / Voice / Menu système).
 function wireControls() {
-  document.querySelector("#btn-auto")?.addEventListener("click", () => { game.setAuto(); syncCtrl(); });
-  document.querySelector("#btn-skip")?.addEventListener("click", () => { game.setSkip(); syncCtrl(); });
-  document.querySelector("#btn-voice")?.addEventListener("click", () => game.replayVoice());
-  document.querySelector("#btn-menu2")?.addEventListener("click", () => openSysMenu());
+  document.querySelectorAll("#ctrlbar .ctrlbtn").forEach((b) => wireHoverSound(b));
+  document.querySelector("#btn-auto")?.addEventListener("click", () => { uiSound("TOGGLE"); game.setAuto(); syncCtrl(); });
+  document.querySelector("#btn-skip")?.addEventListener("click", () => { uiSound("TOGGLE"); game.setSkip(); syncCtrl(); });
+  document.querySelector("#btn-voice")?.addEventListener("click", () => { uiSound("ENTER"); game.replayVoice(); });
+  document.querySelector("#btn-menu2")?.addEventListener("click", () => { uiSound("ENTER"); openSysMenu(); });
 }
 wireControls();
+
+// ---- Sons d'interface (SYSSE.PAK) ------------------------------------------
+// CURSOR = survol, ENTER = validation, CANCEL = retour, INVALID = action interdite.
+function uiSound(name) { try { game.audio?.playSystem(name); } catch {} }
+function wireHoverSound(el, name = "CURSOR") {
+  if (el) el.addEventListener("mouseenter", () => uiSound(name));
+}
 
 // ---- Menu système in-game (Reprendre / Save / Load / Options / Titre) ------
 function openSysMenu() {
@@ -160,8 +168,11 @@ function closeSysMenu() {
 }
 function wireSysMenu() {
   document.querySelectorAll(".sysmenu-btn").forEach((b) => {
+    wireHoverSound(b);
     b.addEventListener("click", () => {
+      game.audio?.resume();
       const act = b.dataset.act;
+      uiSound(act === "resume" || act === "title" ? "CANCEL" : "ENTER");
       closeSysMenu();
       if (act === "resume") { /* rien : on ferme juste */ }
       else if (act === "save") openSaveMenu("save");
@@ -180,6 +191,7 @@ function applySavedVolumes() {
   game.audio?.setVolume("bgm", load("luck.vol.bgm", 55) / 100);
   game.audio?.setVolume("se", load("luck.vol.se", 90) / 100);
   game.autoSpeed = load("luck.autospeed", 5);
+  game.textSpeed = load("luck.textspeed", 7);
 }
 
 // ---- Options (volumes + vitesse auto), persistées en localStorage ----------
@@ -192,11 +204,12 @@ function wireOptions() {
   const load = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : +v; } catch { return d; } };
   const save = (k, v) => { try { localStorage.setItem(k, String(v)); } catch {} };
 
-  const vVoice = get("#opt-voice"), vBgm = get("#opt-bgm"), vSe = get("#opt-se"), vAuto = get("#opt-auto");
+  const vVoice = get("#opt-voice"), vBgm = get("#opt-bgm"), vSe = get("#opt-se"), vAuto = get("#opt-auto"), vText = get("#opt-text");
   if (vVoice) vVoice.value = load("luck.vol.voice", 100);
   if (vBgm) vBgm.value = load("luck.vol.bgm", 55);
   if (vSe) vSe.value = load("luck.vol.se", 90);
   if (vAuto) vAuto.value = load("luck.autospeed", 5);
+  if (vText) vText.value = load("luck.textspeed", 7);
 
   // applique immédiatement les volumes mémorisés
   const apply = () => {
@@ -204,6 +217,7 @@ function wireOptions() {
     game.audio?.setVolume("bgm", (+vBgm.value) / 100);
     game.audio?.setVolume("se", (+vSe.value) / 100);
     game.autoSpeed = +vAuto.value; // 1..10, utilisé par le délai auto
+    game.textSpeed = +vText.value; // 1..10, vitesse de la frappe (10 = instantané)
   };
   apply();
 
@@ -211,8 +225,9 @@ function wireOptions() {
   vBgm?.addEventListener("input", () => { save("luck.vol.bgm", vBgm.value); apply(); });
   vSe?.addEventListener("input", () => { save("luck.vol.se", vSe.value); apply(); });
   vAuto?.addEventListener("input", () => { save("luck.autospeed", vAuto.value); apply(); });
+  vText?.addEventListener("input", () => { save("luck.textspeed", vText.value); apply(); });
 
-  get("#opt-close")?.addEventListener("click", () => { const el = get("#optionsmenu"); if (el) el.style.display = "none"; });
+  get("#opt-close")?.addEventListener("click", () => { uiSound("CANCEL"); const el = get("#optionsmenu"); if (el) el.style.display = "none"; });
 }
 wireOptions();
 
@@ -250,12 +265,16 @@ async function openSaveMenu(mode = "save") {
          </div>`
       : `<div style="padding:6px 8px; font-size:12px; color:#9aa3b8;"><b>Slot ${i}</b> · libre</div>`;
     card.innerHTML = thumb + info;
+    wireHoverSound(card);
     card.addEventListener("click", async () => {
+      game.audio?.resume();
       if (mode === "save") {
+        uiSound("ENTER");
         try { await game.saveToSlot(i); openSaveMenu("save"); }
         catch (e) { console.warn("Save:", e.message); }
       } else {
-        if (!rec) return;
+        if (!rec) { uiSound("INVALID"); return; }
+        uiSound("ENTER");
         closeSaveMenu();
         try { await game.loadFromSlot(i); } catch (e) { console.warn("Load:", e.message); }
       }
@@ -279,13 +298,13 @@ async function openSaveMenu(mode = "save") {
     const b = document.createElement("button");
     b.textContent = String(p + 1);
     b.style.cssText = `border:1px solid #8a93a8; border-radius:6px; padding:5px 12px; cursor:pointer; font-size:14px; ${p === _savePage ? "background:#3a5bd0; color:#fff; border-color:#3a5bd0;" : "background:#fff; color:#39435c;"}`;
-    b.addEventListener("click", () => { _savePage = p; openSaveMenu(mode); });
+    b.addEventListener("click", () => { uiSound("PAGE"); _savePage = p; openSaveMenu(mode); });
     pager.appendChild(b);
   }
   el.style.display = "block";
 }
 function closeSaveMenu() { const el = document.querySelector("#savemenu"); if (el) el.style.display = "none"; }
-document.querySelector("#savemenu-close")?.addEventListener("click", closeSaveMenu);
+document.querySelector("#savemenu-close")?.addEventListener("click", () => { uiSound("CANCEL"); closeSaveMenu(); });
 
 // ---- collecte de fichiers (input dossier / multi / glisser-déposer) --------
 function isPak(name) {
@@ -367,7 +386,13 @@ async function loadAll() {
   for (const name of audioNames) {
     try {
       const buf2 = await store.getFile(name);
-      if (buf2) {
+      if (!buf2) continue;
+      // SYSSE.PAK = sons d'interface (CURSOR/ENTER/CANCEL/…) : on les enregistre
+      // comme sons système plutôt que comme un PAK SE de scène.
+      if (/SYSSE/i.test(name)) {
+        const list = game.loadSystemSe(buf2, name);
+        dlog(`SYSSE ${name}: ${list.length} sons système (${list.map((e) => e.name).join(", ")})`);
+      } else {
         const list = game.loadAudioPak(buf2, name);
         dlog(`AUDIO ${name}: ${list.length} entrées, ids ${list[0]?.id}..${list[list.length - 1]?.id}`);
       }
@@ -555,8 +580,11 @@ function hideTitle() {
 }
 function wireTitle() {
   document.querySelectorAll(".title-btn").forEach((b) => {
+    wireHoverSound(b);
     b.addEventListener("click", () => {
+      game.audio?.resume();
       const act = b.dataset.act;
+      uiSound(act === "exit" ? "CANCEL" : "ENTER");
       if (act === "new") { hideTitle(); try { localStorage.removeItem("luck.entry"); } catch {}; playRef(CONFIG.startEntry); }
       else if (act === "load") { hideTitle(); openSaveMenu("load"); }
       else if (act === "options") { console.log("OPTIONS : config à venir"); }
@@ -566,5 +594,5 @@ function wireTitle() {
   });
 }
 
-console.log("LuckEngine-Web boot v3.16 — scan auto des PAK audio + BGM (id = u16 non nul)");
+console.log("LuckEngine-Web boot v3.17 — sons système SYSSE.PAK + frappe progressive du texte");
 boot();

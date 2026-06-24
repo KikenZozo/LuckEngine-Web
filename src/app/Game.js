@@ -70,6 +70,22 @@ export class Game {
     return pak.listEntries();
   }
 
+  /** Charge SYSSE.PAK (sons d'interface : CURSOR/ENTER/CANCEL/INVALID/…) et les
+   *  enregistre auprès de l'AudioManager pour remplacer les bips synthétiques. */
+  loadSystemSe(arrayBuffer, name = "SYSSE") {
+    const pak = new PakReader(arrayBuffer);
+    const map = {};
+    for (const e of pak.listEntries()) {
+      try { map[String(e.name).toUpperCase()] = pak.getEntry(e.index); } catch {}
+    }
+    this.audio.registerSystemSounds(map);
+    this._hasSysSe = true;
+    return pak.listEntries();
+  }
+
+  /** Joue un son système nommé (CURSOR/ENTER/CANCEL/INVALID/TOGGLE/PAGE). */
+  sysSe(name) { try { this.audio.playSystem(name); } catch {} }
+
   // ---- Résolution audio (mapping id-script -> entrée PAK) -------------------
   // Mapping CONFIRMÉ par rétro-ingénierie des scripts AIR + noms d'entrées PAK :
   //
@@ -615,6 +631,7 @@ export class Game {
   /** Change la langue à chaud et repeint la ligne courante. */
   setLang(lang) {
     this.lang = lang;
+    this._finishReveal();   // ne pas rester bloqué si on change de langue en pleine frappe
     this._redraw();
   }
 
@@ -736,6 +753,9 @@ export class Game {
   }
 
   advance() {
+    // Si le texte est encore en train de s'écrire, le 1er clic le complète
+    // d'un coup (au lieu d'avancer) — exactement comme le jeu original.
+    if (this._reveal && !this._reveal.done) { this._finishReveal(); return; }
     this._clearAutoTimer();
     this._stopCursorAnim();
     if (this._advance) {
@@ -743,6 +763,55 @@ export class Game {
       this._advance = null;
       r();
     }
+  }
+
+  // ---- Effet machine à écrire (révélation progressive du texte) -------------
+  // Révèle le texte caractère par caractère à une vitesse réglable (Options ->
+  // "Vitesse du texte"). Résout la promesse quand tout est affiché. En mode Skip,
+  // ou à vitesse maximale, l'affichage est instantané.
+  _typewrite(name, text) {
+    this._stopReveal();
+    const ts = this.textSpeed ?? 7;              // 1 (lent) .. 10 (instantané)
+    const instant = this.skipMode || ts >= 10 || !text;
+    if (instant) {
+      this.renderer.drawDialogue(name, text);    // tout le texte + plume
+      this._reveal = { done: true };
+      return Promise.resolve();
+    }
+    // total révélable = renvoyé par le renderer (dépend du retour à la ligne).
+    const total = this.renderer.drawDialogue(name, text, 0); // fenêtre vide
+    const cps = 18 + ts * 14;                     // caractères/seconde (ts7 ≈ 116)
+    const start = performance.now();
+    return new Promise((resolve) => {
+      const rev = (this._reveal = { name, text, total, count: 0, done: false, resolve });
+      const loop = (now) => {
+        if (this._reveal !== rev || rev.done) return;
+        if (this.skipMode) { this._finishReveal(); return; } // Skip activé en cours
+        const n = Math.min(total, Math.floor(((now - start) / 1000) * cps));
+        rev.count = n;
+        this._renderBase();                       // réinitialise la zone (anti-cumul d'alpha)
+        this.renderer.drawDialogue(name, text, n);
+        if (n >= total) { rev.done = true; this._revealRAF = null; resolve(); }
+        else this._revealRAF = requestAnimationFrame(loop);
+      };
+      this._revealRAF = requestAnimationFrame(loop);
+    });
+  }
+
+  // Termine la frappe immédiatement (clic du joueur ou bascule Skip).
+  _finishReveal() {
+    const rev = this._reveal;
+    if (!rev || rev.done) return false;
+    if (this._revealRAF) { cancelAnimationFrame(this._revealRAF); this._revealRAF = null; }
+    rev.done = true;
+    this._renderBase();
+    this.renderer.drawDialogue(rev.name, rev.text);  // tout le texte + plume
+    if (rev.resolve) rev.resolve();
+    return true;
+  }
+
+  _stopReveal() {
+    if (this._revealRAF) { cancelAnimationFrame(this._revealRAF); this._revealRAF = null; }
   }
 
   // Attente d'avancement d'un MESSAGE : clic normal, ou résolution auto si Auto
@@ -909,9 +978,10 @@ export class Game {
     }
   }
 
-  // Son de confirmation (clic sur un choix) : deux tons brefs, un peu plus marqué
-  // que le survol, pour signaler la validation.
+  // Son de confirmation (clic sur un choix) : le vrai SE système "ENTER" si
+  // SYSSE.PAK est chargé, sinon un repli synthétique (deux tons brefs).
   _playConfirmSe() {
+    if (this.audio.hasSystem && this.audio.hasSystem("ENTER")) { this.sysSe("ENTER"); return; }
     try {
       const ctx = this.audio && this.audio.ctx;
       if (!ctx) return;
@@ -942,9 +1012,10 @@ export class Game {
     if (i >= 0) this._playSelectSe();       // son au survol d'un choix
   }
 
-  // Petit son de survol d'un choix : un "tick" doux synthétisé via Web Audio
-  // (pas besoin d'un fichier SE système). Discret et toujours disponible.
+  // Son de survol d'un choix : le vrai SE système "CURSOR" si SYSSE.PAK est
+  // chargé, sinon un "tick" doux synthétisé via Web Audio (toujours disponible).
   _playSelectSe() {
+    if (this.audio.hasSystem && this.audio.hasSystem("CURSOR")) { this.sysSe("CURSOR"); return; }
     try {
       const ctx = this.audio && this.audio.ctx;
       if (!ctx) return;
@@ -1038,8 +1109,8 @@ export class Game {
           bgId: this._currentBgId,   // pour restaurer le décor au chargement
         };
         this._renderBase();
-        this.renderer.drawDialogue(name, text);
-        await this._waitAdvance();
+        await this._typewrite(name, text); // frappe progressive (clic = complète)
+        await this._waitAdvance();         // puis attend le clic pour avancer
       },
       select: async (ins) => {
         this._cur = { type: "select", ins };
