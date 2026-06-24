@@ -82,6 +82,20 @@ canvas.addEventListener("click", (ev) => {
   else game.advance();
 });
 
+// Molette vers le HAUT pendant le jeu : ouvre le backlog (historique), comme
+// dans le jeu original. Vers le bas quand le backlog est ouvert : le ferme.
+function anyOverlayOpen() {
+  return ["#import", "#title", "#menu", "#sysmenu", "#savemenu", "#optionsmenu", "#backlog"]
+    .some((s) => { const e = document.querySelector(s); return e && (e.style.display === "block" || e.classList.contains("show")); });
+}
+canvas.addEventListener("wheel", (ev) => {
+  if (ev.deltaY < 0 && !anyOverlayOpen()) openBacklog();
+}, { passive: true });
+document.querySelector("#backlog-scroll")?.addEventListener("wheel", (ev) => {
+  const sc = ev.currentTarget;
+  if (ev.deltaY > 0 && sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 2) closeBacklog();
+}, { passive: true });
+
 // Survol de la souris : met en évidence le choix sous le curseur (SELWIN_s + son).
 canvas.addEventListener("mousemove", (ev) => {
   if (!game._activeChoices) { canvas.style.cursor = ""; return; } // seulement pendant un choix
@@ -97,11 +111,12 @@ canvas.addEventListener("mousemove", (ev) => {
 window.addEventListener("keydown", (ev) => {
   const k = ev.key.toLowerCase();
   if (k === "escape") {
-    // Échap : ferme le menu ouvert, sinon ouvre le menu système.
+    // Échap : ferme l'overlay ouvert (priorité backlog), sinon ouvre le menu système.
     const sys = document.querySelector("#sysmenu");
     const sav = document.querySelector("#savemenu");
     const opt = document.querySelector("#optionsmenu");
-    if (opt && opt.style.display === "block") { opt.style.display = "none"; }
+    if (backlogOpen()) { closeBacklog(); }
+    else if (opt && opt.style.display === "block") { opt.style.display = "none"; }
     else if (sav && sav.style.display === "block") { closeSaveMenu(); }
     else if (sys && sys.style.display === "block") { closeSysMenu(); }
     else { openSysMenu(); }
@@ -251,6 +266,7 @@ function wireHoverSound(el, name = "CURSOR") {
 function openSysMenu() {
   const el = document.querySelector("#sysmenu");
   if (el) el.style.display = "block";
+  refreshSysMenuDisabled();
 }
 function closeSysMenu() {
   const el = document.querySelector("#sysmenu");
@@ -274,6 +290,106 @@ function wireSysMenu() {
 }
 wireSysMenu();
 
+// ---- Menu système GRAPHIQUE (planche systemmenu : 8 entrées × 3 états) ------
+let _sysAssets = null;
+const SYS_ACTS = ["save", "load", "options", "title", "qsave", "qload", "manual", "quit"];
+function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function flashEl(b) { try { b.animate([{ filter: "brightness(2.4)" }, { filter: "brightness(1)" }], { duration: 380 }); } catch {} }
+function toast(msg) {
+  let t = document.querySelector("#toast");
+  if (!t) { t = document.createElement("div"); t.id = "toast"; t.style.cssText = "position:absolute; left:50%; bottom:80px; transform:translateX(-50%); z-index:90; background:rgba(15,20,32,.92); color:#eaf0ff; padding:10px 20px; border-radius:10px; font-family:'Trebuchet MS',system-ui,sans-serif; font-size:15px; box-shadow:0 3px 14px rgba(0,0,0,.5);"; document.body.appendChild(t); }
+  t.textContent = msg; t.style.display = "block";
+  clearTimeout(t._h); t._h = setTimeout(() => { t.style.display = "none"; }, 1800);
+}
+function sysItemImg(b, state) { if (_sysAssets?.items) b.style.backgroundImage = `url(${_sysAssets.items[state][+b.dataset.i]})`; }
+
+function buildSystemMenu() {
+  _sysAssets = game.getSystemMenuAssets();
+  const sys = document.querySelector("#sysmenu");
+  if (!sys || !_sysAssets.items) return; // pas de systemmenu -> on garde le menu HTML
+  const cols = 4, cellW = 212, cellH = 184, gap = 12;
+  sys.innerHTML = "";
+  sys.style.background = _sysAssets.bg ? `#0c1018 url(${_sysAssets.bg}) center/cover no-repeat` : "rgba(12,16,24,.92)";
+  const grid = document.createElement("div");
+  grid.id = "sysgrid";
+  grid.style.cssText = `position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); display:grid; grid-template-columns:repeat(${cols},${cellW}px); gap:${gap}px;`;
+  SYS_ACTS.forEach((act, i) => {
+    const b = document.createElement("button");
+    b.className = "sysmenu-item"; b.dataset.act = act; b.dataset.i = i;
+    b.style.cssText = `width:${cellW}px; height:${cellH}px; border:0; padding:0; cursor:pointer; background:transparent url(${_sysAssets.items[0][i]}) no-repeat center/contain; transition:transform .08s;`;
+    grid.appendChild(b);
+  });
+  sys.appendChild(grid);
+  // clic en dehors des entrées (sur le fond) = reprendre (ferme le menu)
+  sys.addEventListener("click", (e) => { if (e.target === sys) { uiSound("CANCEL"); closeSysMenu(); } });
+  wireSystemMenu();
+}
+
+// Grise CHARGER (pas de save) et CHANGEMENT RAPIDE (pas de sauvegarde rapide).
+async function refreshSysMenuDisabled() {
+  const grid = document.querySelector("#sysgrid");
+  if (!grid) return;
+  let hasSaves = false, hasQuick = false;
+  try { hasSaves = (await game.listSaves()).some((s) => /^\d+$/.test(String(s.slot))); } catch {}
+  try { hasQuick = await game.hasQuickSave(); } catch {}
+  grid.querySelectorAll(".sysmenu-item").forEach((b) => {
+    const a = b.dataset.act;
+    const dis = (a === "load" && !hasSaves) || (a === "qload" && !hasQuick);
+    b.dataset.disabled = dis ? "1" : "";
+    sysItemImg(b, dis ? 2 : 0);
+    b.style.cursor = dis ? "default" : "pointer";
+  });
+}
+
+function wireSystemMenu() {
+  document.querySelectorAll("#sysgrid .sysmenu-item").forEach((b) => {
+    const a = b.dataset.act;
+    b.addEventListener("mouseenter", () => { if (b.dataset.disabled) return; uiSound("CURSOR"); sysItemImg(b, 1); b.style.transform = "scale(1.05)"; });
+    b.addEventListener("mouseleave", () => { b.style.transform = "scale(1)"; sysItemImg(b, b.dataset.disabled ? 2 : 0); });
+    b.addEventListener("click", async () => {
+      game.audio?.resume();
+      if (b.dataset.disabled) { uiSound("INVALID"); return; }
+      uiSound(a === "title" || a === "quit" ? "CANCEL" : "ENTER");
+      if (a === "save") { closeSysMenu(); openSaveMenu("save"); }
+      else if (a === "load") { closeSysMenu(); openSaveMenu("load"); }
+      else if (a === "options") { closeSysMenu(); openOptions(); }
+      else if (a === "title") { closeSysMenu(); try { localStorage.removeItem("luck.entry"); } catch {}; showTitle(); }
+      else if (a === "qsave") { try { await game.quickSave(); flashEl(b); toast("Sauvegarde rapide effectuée"); } catch (e) { uiSound("INVALID"); } refreshSysMenuDisabled(); }
+      else if (a === "qload") { if (await game.hasQuickSave()) { closeSysMenu(); try { await game.quickLoad(); } catch (e) {} } else uiSound("INVALID"); }
+      else if (a === "manual") { toast("Manuel : importe MANUAL.PAK (à venir)"); }
+      else if (a === "quit") { closeSysMenu(); } // « Quitter » = ferme le menu (navigateur)
+    });
+  });
+}
+
+// ---- Backlog (historique des répliques) ------------------------------------
+function backlogOpen() { return document.querySelector("#backlog")?.style.display === "block"; }
+function openBacklog() {
+  const el = document.querySelector("#backlog");
+  const scroll = document.querySelector("#backlog-scroll");
+  if (!el || !scroll) return;
+  if (_sysAssets?.backlog) el.style.background = `#0c1018 url(${_sysAssets.backlog}) center/cover no-repeat`;
+  const hist = game.getHistory();
+  scroll.innerHTML = "";
+  if (!hist.length) {
+    scroll.innerHTML = `<div style="color:#9aa6c0; text-align:center; margin-top:48px; font-size:16px;">Aucune réplique lue pour l'instant.</div>`;
+  }
+  for (const h of hist) {
+    const row = document.createElement("div");
+    row.style.cssText = "margin:0 0 14px; padding:11px 18px; background:rgba(8,12,20,.6); border-radius:10px; color:#eef2fb; line-height:1.55; font-size:17px;";
+    const sp = h.speaker ? `<div style="color:#ffd479; font-weight:600; margin-bottom:3px; font-size:15px;">${escapeHtml(h.speaker)}</div>` : "";
+    const v = h.voice ? `<span class="bl-voice" data-v="${h.voice}" title="Rejouer la voix" style="cursor:pointer; margin-right:8px; opacity:.85;">🔊</span>` : "";
+    row.innerHTML = sp + `<div>${v}${escapeHtml(h.text)}</div>`;
+    scroll.appendChild(row);
+  }
+  el.style.display = "block";
+  scroll.scrollTop = scroll.scrollHeight; // affiche la fin (dernière réplique)
+  scroll.querySelectorAll(".bl-voice").forEach((vv) =>
+    vv.addEventListener("click", (e) => { e.stopPropagation(); uiSound("CURSOR"); game.replayHistoryVoice(+vv.dataset.v); })
+  );
+}
+function closeBacklog() { const el = document.querySelector("#backlog"); if (el) el.style.display = "none"; }
+document.querySelector("#backlog-close")?.addEventListener("click", () => { uiSound("CANCEL"); closeBacklog(); });
 // Applique les volumes (et vitesse auto) mémorisés en localStorage à l'audio.
 function applySavedVolumes() {
   const load = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : +v; } catch { return d; } };
@@ -500,6 +616,7 @@ async function loadAll() {
   try { buildControlPanel(); } catch (e) { console.warn("Control panel:", e.message); }
   try { applyMenuSkins(); } catch (e) { console.warn("Menu skins:", e.message); }
   // VIDÉOS : on scanne les .webm/.mp4/.ogv importés (opening AIR_OP_A/B, etc.).
+  try { buildSystemMenu(); } catch (e) { console.warn("System menu:", e.message); }
   // Le VM les jouera sur l'opcode MOVIE. On garde les octets bruts par nom.
   try {
     const vids = (await store.listFiles()).filter((n) => /\.(webm|mp4|ogv)$/i.test(n));
@@ -687,5 +804,5 @@ function wireTitle() {
   });
 }
 
-console.log("LuckEngine-Web boot v3.18 — panneau de contrôle ControlPanel_*, menus skinés, fondus de scène");
-boot();
+console.log("LuckEngine-Web boot v3.19 — menu système graphique (systemmenu) + backlog (historique)");
+boot();boot();
