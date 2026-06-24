@@ -6,6 +6,11 @@
 //  être dessinés avant drawDialogue via drawBackground.)
 // ============================================================================
 
+// Pile de polices proche du rendu original : gothique CJK pour le japonais,
+// humaniste propre pour le latin (FR/EN). Repli système si rien d'installé.
+const DIALOGUE_FONT =
+  "'Hiragino Kaku Gothic ProN', 'Yu Gothic', Meiryo, 'Noto Sans CJK JP', 'Noto Sans JP', 'Segoe UI', system-ui, sans-serif";
+
 export class CanvasRenderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -67,7 +72,11 @@ export class CanvasRenderer {
     return lines;
   }
 
-  drawDialogue(name, text) {
+  // Dessine la fenêtre de dialogue. `revealCount` (optionnel) limite le nombre
+  // de caractères affichés (effet machine à écrire) ; null/omis = tout le texte.
+  // Renvoie le nombre total de caractères révélables (après retour à la ligne),
+  // ce qui permet à la boucle d'animation de savoir quand la frappe est finie.
+  drawDialogue(name, text, revealCount = null) {
     const { ctx, canvas } = this;
     const skin = this.uiSkin;
     // Fenêtre de dialogue : vraie image MWIN0 (1280x240) en bas, sinon fallback.
@@ -86,19 +95,33 @@ export class CanvasRenderer {
       const padX = inX + inW * 0.04;                // petit retrait dans la fenêtre
       let textY = inTop + inH * 0.38;
       if (name) {
+        ctx.font = `bold ${Math.round(inH * 0.18)}px ${DIALOGUE_FONT}`;
+        ctx.shadowColor = "rgba(0,0,0,0.55)"; ctx.shadowBlur = 4; ctx.shadowOffsetY = 1;
         ctx.fillStyle = "#ffd479";
-        ctx.font = `bold ${Math.round(inH * 0.18)}px system-ui, sans-serif`;
         ctx.fillText(name, padX, inTop + inH * 0.20);
+        ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
         textY = inTop + inH * 0.50;
       }
-      ctx.fillStyle = "white";
       const fs = Math.round(inH * 0.16);
-      ctx.font = `${fs}px system-ui, sans-serif`;
-      for (const line of this._wrap(text, inW - inW * 0.08)) {
-        ctx.fillText(line, padX, textY);
+      ctx.font = `${fs}px ${DIALOGUE_FONT}`;
+      // Découpe en lignes sur le texte COMPLET (mise en page stable pendant la
+      // frappe), puis on révèle caractère par caractère selon `revealCount`.
+      const lines = this._wrap(text, inW - inW * 0.08);
+      const total = lines.reduce((s, l) => s + l.length, 0);
+      const fullyShown = revealCount == null || revealCount >= total;
+      let budget = fullyShown ? Infinity : Math.max(0, revealCount);
+      ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 4; ctx.shadowOffsetY = 1;
+      ctx.fillStyle = "white";
+      for (const line of lines) {
+        const part = budget >= line.length ? line : line.slice(0, budget);
+        if (part) ctx.fillText(part, padX, textY);
+        budget -= line.length;
         textY += fs * 1.4;
+        if (budget <= 0 && !fullyShown) break;
       }
-      if (skin.mwinCursor) {
+      ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+      // Plume "continuer" : seulement quand TOUT le texte est révélé.
+      if (skin.mwinCursor && fullyShown) {
         // Plume animée : MWIN_CURSOR contient 4 frames empilées. On mémorise la
         // zone de dessin pour que la boucle d'animation n'y redessine que la plume.
         const frames = skin.mwinCursor.frames || 1;
@@ -122,7 +145,7 @@ export class CanvasRenderer {
       } else {
         this._cursorBox = null;
       }
-      return;
+      return total;
     }
     // --- fallback (pas d'image MWIN) ---
     const boxH = 180;
@@ -134,19 +157,29 @@ export class CanvasRenderer {
     let textY = y + 50;
     if (name) {
       ctx.fillStyle = "#ffd479";
-      ctx.font = "bold 24px system-ui, sans-serif";
+      ctx.font = `bold 24px ${DIALOGUE_FONT}`;
       ctx.fillText(name, 44, y + 36);
       textY = y + 76;
     }
     ctx.fillStyle = "white";
-    ctx.font = "26px system-ui, sans-serif";
-    for (const line of this._wrap(text, canvas.width - 100)) {
-      ctx.fillText(line, 44, textY);
+    ctx.font = `26px ${DIALOGUE_FONT}`;
+    const lines = this._wrap(text, canvas.width - 100);
+    const total = lines.reduce((s, l) => s + l.length, 0);
+    const fullyShown = revealCount == null || revealCount >= total;
+    let budget = fullyShown ? Infinity : Math.max(0, revealCount);
+    for (const line of lines) {
+      const part = budget >= line.length ? line : line.slice(0, budget);
+      if (part) ctx.fillText(part, 44, textY);
+      budget -= line.length;
       textY += 36;
+      if (budget <= 0 && !fullyShown) break;
     }
-    ctx.fillStyle = "rgba(255,255,255,0.5)";
-    ctx.font = "16px system-ui, sans-serif";
-    ctx.fillText("clic pour continuer \u25B6", canvas.width - 240, canvas.height - 32);
+    if (fullyShown) {
+      ctx.fillStyle = "rgba(255,255,255,0.5)";
+      ctx.font = `16px ${DIALOGUE_FONT}`;
+      ctx.fillText("clic pour continuer \u25B6", canvas.width - 240, canvas.height - 32);
+    }
+    return total;
   }
 
   /** @param {string[]} choices */
@@ -179,7 +212,7 @@ export class CanvasRenderer {
         const sh = src.band ? (src.band.y1 - src.band.y0) * src.h : src.h;
         ctx.drawImage(src.bitmap, 0, sy, src.w, sh, x, y, bw, bh);
         ctx.fillStyle = "#fff";
-        ctx.font = `${fs}px 'Trebuchet MS', system-ui, sans-serif`;
+        ctx.font = `${fs}px ${DIALOGUE_FONT}`;
         ctx.shadowColor = "rgba(0,0,0,0.4)"; ctx.shadowBlur = 3;
         ctx.fillText(c, canvas.width / 2, y + bh / 2);
         ctx.shadowBlur = 0;
@@ -255,7 +288,7 @@ export class CanvasRenderer {
     this._cursorBox = null; // pas de plume sur la narration cinématique
     const fs = Math.round(canvas.height * 0.045);
     ctx.save();
-    ctx.font = `${fs}px 'Trebuchet MS', system-ui, sans-serif`;
+    ctx.font = `${fs}px ${DIALOGUE_FONT}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     const lh = fs * 1.7;

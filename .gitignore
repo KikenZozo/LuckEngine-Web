@@ -53,6 +53,7 @@ Thumbs.db
 *.log
 .vscode/
 .idea/
+.claude/
 *.swp
 
 # Local proprietary game assets - do not commit
