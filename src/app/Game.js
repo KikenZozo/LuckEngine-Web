@@ -285,6 +285,49 @@ export class Game {
     }
     return urls;
   }
+// Découpe une planche en grille cols×rows -> tableau dataURL[row][col]. Sert
+  // au menu système (systemmenu = 8 entrées × 3 états : normal/survol/désactivé).
+  sliceGridURLs(name, cols, rows) {
+    const found = this._imageBytesByName(name);
+    if (!found) return null;
+    const img = decodeCZ(found.bytes);
+    if (!img) return null;
+    const full = document.createElement("canvas");
+    full.width = img.width; full.height = img.height;
+    full.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height), 0, 0);
+    const cw = img.width / cols, ch = img.height / rows;
+    const grid = [];
+    for (let r = 0; r < rows; r++) {
+      const row = [];
+      for (let c = 0; c < cols; c++) {
+        const cv = document.createElement("canvas");
+        cv.width = Math.round(cw); cv.height = Math.round(ch);
+        cv.getContext("2d").drawImage(full, c * cw, r * ch, cw, ch, 0, 0, Math.round(cw), Math.round(ch));
+        row.push(cv.toDataURL("image/png"));
+      }
+      grid.push(row);
+    }
+    return grid;
+  }
+
+  // Assets du menu système graphique : fond + planche d'entrées (8 entrées,
+  // états normal/survol/désactivé) telle que livrée par le patch FR.
+  getSystemMenuAssets() {
+    return {
+      bg: this.titleImageURL("system_menu_bg"),
+      items: this.sliceGridURLs("systemmenu", 8, 3),
+      backlog: this.titleImageURL("backlog_texture"),
+    };
+  }
+
+  // Historique des répliques (backlog). Renvoie une copie pour l'affichage.
+  getHistory() { return (this._history || []).slice(); }
+  // Rejoue la voix d'une réplique de l'historique (id voix direct VOICE.PAK).
+  replayHistoryVoice(id) {
+    if (!id) return;
+    const rv = this._resolveVoice(id);
+    if (rv) this.audio.playVoice(rv.bytes, rv.from);
+  }
 
   // Rassemble les vraies images d'UI in-game (panneau de contrôle + fond Options)
   // en dataURL, pour que l'interface HTML colle au jeu d'origine. Champs null si
@@ -1126,6 +1169,7 @@ export class Game {
     this.bgOverlays = new Map();
     this.sprites = new Map();
     this._lastMsgScene = undefined; // pas de fondu sur la 1re réplique d'un seen
+    this._history = [];             // backlog : repart vide à chaque lancement/chargement
     const codes = parseScript(this.pak.getEntry(index));
 
     const vm = new AIRVM(codes, {
@@ -1152,6 +1196,9 @@ export class Game {
         const m = raw.match(/^@([^@]*)@([\s\S]*)$/);
         const name = m ? m[1] : "";
         const text = m ? m[2] : raw;
+        // Backlog : on archive la réplique (limité aux 300 dernières).
+        this._history.push({ speaker: name, text, voice: ins.unk || 0 });
+        if (this._history.length > 300) this._history.shift();
         // Point de sauvegarde courant (stable, au niveau d'un MESSAGE) : on
         // mémorise où on en est pour pouvoir reprendre exactement ici.
         this._savePoint = {
