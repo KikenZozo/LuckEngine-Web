@@ -17,6 +17,7 @@ export class CanvasRenderer {
     this.ctx = canvas.getContext("2d", { willReadFrequently: true });
     this.smoothing = true; // diagnostic : lissage activé par défaut (touche S)
     this.uiSkin = null;
+    this.windowOpacity = 1; // opacité de la fenêtre de dialogue (Options)
   }
   setUiSkin(skin) { this.uiSkin = skin || null; }
 
@@ -55,6 +56,76 @@ export class CanvasRenderer {
     this.ctx.drawImage(img, dx, dy, dw, dh);
   }
 
+  // ---- Effets d'écran (shake / filtres couleur / flash) ---------------------
+  // Ces effets agissent sur l'ÉLÉMENT canvas (CSS transform/filter) ou via un
+  // overlay : ils sont donc indépendants du dessin 2D et ne sont jamais effacés
+  // par clear()/_renderBase(). Tous sont transitoires ou réinitialisables.
+
+  // Secousse d'écran (QUAKE/SHAKE) : translation aléatoire décroissante du canvas.
+  // Un léger zoom évite de révéler un bord pendant la translation.
+  shake({ amp = 14, duration = 460 } = {}) {
+    if (this._shakeRAF) cancelAnimationFrame(this._shakeRAF);
+    const cv = this.canvas;
+    const start = performance.now();
+    const tick = (now) => {
+      const t = (now - start) / duration;
+      if (t >= 1) { cv.style.transform = ""; this._shakeRAF = null; return; }
+      const decay = 1 - t;
+      const a = amp * decay;
+      const dx = (Math.random() * 2 - 1) * a;
+      const dy = (Math.random() * 2 - 1) * a;
+      cv.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) scale(${(1 + 0.02 * decay).toFixed(3)})`;
+      this._shakeRAF = requestAnimationFrame(tick);
+    };
+    this._shakeRAF = requestAnimationFrame(tick);
+  }
+
+  // Joue un MOTIF de tremblement exact (séquence [{n,dx,dy}] issue de SHAKELIST_SET).
+  // Chaque pas dure n frames (~16 ms) et applique l'offset (dx,dy) en px-jeu, mis à
+  // l'échelle de l'affichage. Léger zoom pour ne pas révéler de bord.
+  playShake(steps, frameMs = 1000 / 60) {
+    if (!steps || !steps.length) return;
+    if (this._shakeRAF) cancelAnimationFrame(this._shakeRAF);
+    const cv = this.canvas;
+    const scale = (cv.clientWidth || cv.width) / cv.width; // px-jeu -> px-écran
+    let si = 0, stepStart = performance.now();
+    const run = (now) => {
+      let s = steps[si];
+      while (s && (now - stepStart) >= s.n * frameMs) { stepStart += s.n * frameMs; si++; s = steps[si]; }
+      if (!s) { cv.style.transform = ""; this._shakeRAF = null; return; }
+      cv.style.transform = `translate(${(s.dx * scale).toFixed(1)}px, ${(s.dy * scale).toFixed(1)}px) scale(1.04)`;
+      this._shakeRAF = requestAnimationFrame(run);
+    };
+    this._shakeRAF = requestAnimationFrame(run);
+  }
+
+  // Filtre couleur persistant (sépia, négatif, N&B) appliqué au canvas via CSS.
+  setColorFilter(css) { this._colorFilter = css || ""; this.canvas.style.filter = this._colorFilter; }
+  clearColorFilter() { if (this._colorFilter) this.setColorFilter(""); }
+
+  // Flash bref (impact) : surimpression d'une couleur qui s'estompe. Overlay DOM
+  // calé sur le canvas, retiré à la fin (n'altère pas le contenu dessiné).
+  flash({ color = "#ffffff", duration = 260 } = {}) {
+    const cv = this.canvas;
+    const host = cv.parentElement;
+    if (!host) return;
+    if (getComputedStyle(host).position === "static") host.style.position = "relative";
+    const ov = document.createElement("div");
+    ov.style.cssText = `position:absolute; left:0; top:0; width:100%; height:100%; background:${color}; pointer-events:none; z-index:45; opacity:1;`;
+    host.appendChild(ov);
+    try {
+      ov.animate([{ opacity: 0.85 }, { opacity: 0 }], { duration, easing: "ease-out" })
+        .addEventListener("finish", () => ov.remove());
+    } catch { setTimeout(() => ov.remove(), duration); }
+  }
+
+  // Réinitialise tous les effets d'écran (changement de scène, sécurité anti-blocage).
+  resetEffects() {
+    if (this._shakeRAF) { cancelAnimationFrame(this._shakeRAF); this._shakeRAF = null; }
+    this.canvas.style.transform = "";
+    this.clearColorFilter();
+  }
+
   _wrap(text, maxWidth) {
     const words = String(text).split(/(\s+)/);
     const lines = [];
@@ -85,7 +156,11 @@ export class CanvasRenderer {
       const h = canvas.height * 0.30;
       const y = canvas.height - h;
       ctx.imageSmoothingEnabled = this.smoothing;
+      // Opacité réglable de la fenêtre (le texte reste, lui, pleinement opaque).
+      const prevA = ctx.globalAlpha;
+      ctx.globalAlpha = this.windowOpacity == null ? 1 : this.windowOpacity;
       ctx.drawImage(skin.mwin.bitmap, 0, y, W, h);
+      ctx.globalAlpha = prevA;
       // Zone INTERNE réelle de la fenêtre (la fenêtre a des marges transparentes).
       const ins = skin.mwin.inset || { x0: 0, y0: 0, x1: 1, y1: 1 };
       const inX = ins.x0 * W;                       // bord gauche de la fenêtre
@@ -206,11 +281,42 @@ export class CanvasRenderer {
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       const fs = Math.round(bh * 0.42);
+      // SELWIN = 3 bandes empilées (états du bouton). Le jeu original les utilise
+      // comme : normale = bande du milieu, survol/sélection = bande la plus claire
+      // (en bas). Si une image SELWIN_s distincte existe, elle prime pour l'état
+      // survolé ; sinon on découpe la 3e bande de SELWIN -> survol fonctionnel
+      // même quand les 3 états sont dans une seule image.
+      const bandH = img.h / 3;
       choices.forEach((c, i) => {
-        const src = (i === selectedIndex && skin.selwinSel) ? skin.selwinSel : img;
-        const sy = src.band ? src.band.y0 * src.h : 0;
-        const sh = src.band ? (src.band.y1 - src.band.y0) * src.h : src.h;
+        const selected = i === selectedIndex;
+        let src, sy, sh;
+        if (selected && skin.selwinSel) {
+          src = skin.selwinSel;
+          sy = src.band ? src.band.y0 * src.h : 0;
+          sh = src.band ? (src.band.y1 - src.band.y0) * src.h : src.h;
+        } else {
+          src = img;
+          // normale : bande du milieu ; survol : 3e bande (la plus lumineuse)
+          sy = selected ? bandH * 2 : bandH * 1;
+          sh = bandH;
+        }
         ctx.drawImage(src.bitmap, 0, sy, src.w, sh, x, y, bw, bh);
+        // Surbrillance du choix survolé : éclaircit la barre + liseré lumineux,
+        // garantissant un retour visuel net quel que soit le visuel SELWIN.
+        if (selected) {
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          ctx.fillStyle = "rgba(90,130,225,0.22)";
+          ctx.fillRect(x, y, bw, bh);
+          ctx.restore();
+          ctx.save();
+          ctx.strokeStyle = "rgba(180,205,255,0.85)";
+          ctx.lineWidth = 2;
+          ctx.shadowColor = "rgba(120,165,255,0.9)"; ctx.shadowBlur = 12;
+          if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x + 1, y + 1, bw - 2, bh - 2, bh * 0.45); ctx.stroke(); }
+          else ctx.strokeRect(x + 1, y + 1, bw - 2, bh - 2);
+          ctx.restore();
+        }
         ctx.fillStyle = "#fff";
         ctx.font = `${fs}px ${DIALOGUE_FONT}`;
         ctx.shadowColor = "rgba(0,0,0,0.4)"; ctx.shadowBlur = 3;

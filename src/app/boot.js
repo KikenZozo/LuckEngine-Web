@@ -54,6 +54,11 @@ window.badgeDiag = function () {
   }
 };
 
+// Effets d'écran : `fx(false)` désactive shake/sépia/négatif si un opcode
+// déclenche un effet indésirable ; `fxTest()` essaie une secousse + un flash.
+window.fx = function (on = true) { game.fxEnabled = !!on; console.log("Effets d'écran:", game.fxEnabled ? "ON" : "OFF"); };
+window.fxTest = function () { renderer.shake?.({ amp: 18, duration: 600 }); renderer.flash?.({ color: "#fff", duration: 240 }); };
+
 function wireLangBar() {
   const bar = document.querySelector("#langbar");
   if (!bar) return;
@@ -101,10 +106,42 @@ window.addEventListener("keydown", (ev) => {
     const sys = document.querySelector("#sysmenu");
     const sav = document.querySelector("#savemenu");
     const opt = document.querySelector("#optionsmenu");
-    if (opt && opt.style.display === "block") { opt.style.display = "none"; }
+    if (galleryViewOpen()) { closeGalleryView(); }
+    else if (galleryOpen()) { closeGallery(); }
+    else if (helpOpen()) { closeHelp(); }
+    else if (backlogOpen()) { closeBacklog(); }
+    else if (opt && opt.style.display === "block") { opt.style.display = "none"; }
     else if (sav && sav.style.display === "block") { closeSaveMenu(); }
     else if (sys && sys.style.display === "block") { closeSysMenu(); }
     else { openSysMenu(); }
+    return;
+  }
+  // Pendant une saisie (champ texte), on ne capture aucun raccourci (sauf Échap, géré au-dessus).
+  const _tag = (ev.target && ev.target.tagName) || "";
+  if (_tag === "INPUT" || _tag === "TEXTAREA") return;
+  // Aide / manuel : F1 ou « ? ».
+  if (k === "f1" || k === "?") { ev.preventDefault(); if (helpOpen()) closeHelp(); else if (!anyOverlayOpen()) openHelp(); return; }
+  // Plein écran : F.
+  if (k === "f") { toggleFullscreen(); return; }
+  // Backlog : Page↑ ou H ouvre/ferme l'historique des répliques.
+  if (k === "pageup" || k === "h") {
+    if (backlogOpen()) closeBacklog();
+    else if (!anyOverlayOpen() && game.getHistory && game.getHistory().length) openBacklog();
+    return;
+  }
+  // Galerie : G ouvre/ferme la galerie d'assets décoratifs.
+  if (k === "g") {
+    if (galleryOpen()) closeGallery();
+    else if (!anyOverlayOpen()) openGallery();
+    return;
+  }
+  // Espace / Entrée : avance le texte (comme un clic), si aucun menu n'est ouvert
+  // et qu'on n'est pas en train de cliquer un bouton / saisir dans un champ.
+  if (k === " " || k === "enter" || k === "spacebar") {
+    const tag = (ev.target && ev.target.tagName) || "";
+    if (anyOverlayOpen() || tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON") return;
+    ev.preventDefault();
+    game.advance();
     return;
   }
   if (k === "l") {
@@ -268,6 +305,7 @@ function wireSysMenu() {
       else if (act === "save") openSaveMenu("save");
       else if (act === "load") openSaveMenu("load");
       else if (act === "options") openOptions();
+      else if (act === "gallery") openGallery();
       else if (act === "title") { try { localStorage.removeItem("luck.entry"); } catch {}; showTitle(); }
     });
   });
@@ -282,6 +320,7 @@ function applySavedVolumes() {
   game.audio?.setVolume("se", load("luck.vol.se", 90) / 100);
   game.autoSpeed = load("luck.autospeed", 5);
   game.textSpeed = load("luck.textspeed", 7);
+  renderer.windowOpacity = load("luck.winopacity", 100) / 100;
 }
 
 // ---- Options (volumes + vitesse auto), persistées en localStorage ----------
@@ -294,12 +333,13 @@ function wireOptions() {
   const load = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : +v; } catch { return d; } };
   const save = (k, v) => { try { localStorage.setItem(k, String(v)); } catch {} };
 
-  const vVoice = get("#opt-voice"), vBgm = get("#opt-bgm"), vSe = get("#opt-se"), vAuto = get("#opt-auto"), vText = get("#opt-text");
+  const vVoice = get("#opt-voice"), vBgm = get("#opt-bgm"), vSe = get("#opt-se"), vAuto = get("#opt-auto"), vText = get("#opt-text"), vWin = get("#opt-winop");
   if (vVoice) vVoice.value = load("luck.vol.voice", 100);
   if (vBgm) vBgm.value = load("luck.vol.bgm", 55);
   if (vSe) vSe.value = load("luck.vol.se", 90);
   if (vAuto) vAuto.value = load("luck.autospeed", 5);
   if (vText) vText.value = load("luck.textspeed", 7);
+  if (vWin) vWin.value = load("luck.winopacity", 100);
 
   // applique immédiatement les volumes mémorisés
   const apply = () => {
@@ -308,6 +348,7 @@ function wireOptions() {
     game.audio?.setVolume("se", (+vSe.value) / 100);
     game.autoSpeed = +vAuto.value; // 1..10, utilisé par le délai auto
     game.textSpeed = +vText.value; // 1..10, vitesse de la frappe (10 = instantané)
+    if (vWin) { renderer.windowOpacity = (+vWin.value) / 100; game._redraw?.(); } // opacité fenêtre
   };
   apply();
 
@@ -316,6 +357,7 @@ function wireOptions() {
   vSe?.addEventListener("input", () => { save("luck.vol.se", vSe.value); apply(); });
   vAuto?.addEventListener("input", () => { save("luck.autospeed", vAuto.value); apply(); });
   vText?.addEventListener("input", () => { save("luck.textspeed", vText.value); apply(); });
+  vWin?.addEventListener("input", () => { save("luck.winopacity", vWin.value); apply(); });
 
   get("#opt-close")?.addEventListener("click", () => { uiSound("CANCEL"); const el = get("#optionsmenu"); if (el) el.style.display = "none"; });
 }
@@ -395,6 +437,220 @@ async function openSaveMenu(mode = "save") {
 }
 function closeSaveMenu() { const el = document.querySelector("#savemenu"); if (el) el.style.display = "none"; }
 document.querySelector("#savemenu-close")?.addEventListener("click", () => { uiSound("CANCEL"); closeSaveMenu(); });
+
+// ---- Backlog / historique des répliques (molette ↑, comme le vrai AIR) ------
+const BL_VOICE_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.3v5.4h3.4L12 18.6V5.4L7.4 9.3H4z"/><path d="M15.4 9a3.6 3.6 0 0 1 0 6"/><path d="M17.9 6.4a7 7 0 0 1 0 11.2"/></svg>';
+
+function backlogOpen() { return document.querySelector("#backlog")?.classList.contains("show"); }
+
+let _backlogTex; // dataURL du vrai fond de backlog (PARTS.PAK: backlog_texture), résolu une fois
+function openBacklog() {
+  const el = document.querySelector("#backlog");
+  const list = document.querySelector("#backlog-list");
+  if (!el || !list) return;
+  game._clearAutoTimer?.();
+  // Skin avec la vraie texture du jeu si disponible (sinon le dégradé CSS reste).
+  if (_backlogTex === undefined) _backlogTex = game.titleImageURL?.("backlog_texture") || null;
+  if (_backlogTex) el.style.background = `#0c1018 url(${_backlogTex}) center/cover`;          // un menu interrompt auto/skip
+  const hist = game.getHistory ? game.getHistory() : [];
+  list.innerHTML = "";
+  if (!hist.length) {
+    list.innerHTML = '<div id="backlog-empty">Aucune réplique pour l’instant.</div>';
+  } else {
+    for (const h of hist) {
+      const row = document.createElement("div");
+      row.className = "bl-row";
+      const hasVoice = !!(h.voice && h.voice.bytes);
+      const vb = document.createElement("button");
+      vb.className = "bl-voice" + (hasVoice ? "" : " empty");
+      vb.innerHTML = BL_VOICE_SVG;
+      vb.title = hasVoice ? "Réécouter la voix" : "";
+      if (hasVoice) vb.addEventListener("click", () => { uiSound("ENTER"); game.replayHistoryVoice(h.voice); });
+      const tx = document.createElement("div");
+      tx.className = "bl-text";
+      tx.innerHTML = (h.name ? `<span class="bl-name">${escapeHtml(h.name)}</span>` : "") + escapeHtml(h.text);
+      row.append(vb, tx);
+      list.appendChild(row);
+    }
+  }
+  el.classList.add("show");
+  list.scrollTop = list.scrollHeight; // démarre en bas (réplique la plus récente)
+}
+function closeBacklog() { document.querySelector("#backlog")?.classList.remove("show"); }
+function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+document.querySelector("#backlog-close")?.addEventListener("click", () => { uiSound("CANCEL"); closeBacklog(); });
+
+// Un overlay plein écran est-il ouvert ? (pour ne pas avancer le texte derrière)
+function anyOverlayOpen() {
+  if (backlogOpen() || galleryOpen() || helpOpen()) return true;
+  const ids = ["#sysmenu", "#savemenu", "#optionsmenu", "#menu", "#title", "#gallery", "#help"];
+  return ids.some((id) => { const e = document.querySelector(id); return e && (e.style.display === "block" || e.classList.contains("show")); });
+}
+
+// Molette vers le HAUT sur la scène = ouvrir le backlog (geste AIR classique).
+canvas.addEventListener("wheel", (ev) => {
+  if (anyOverlayOpen()) return;
+  if (ev.deltaY < 0 && game.getHistory && game.getHistory().length) { ev.preventDefault(); openBacklog(); }
+}, { passive: false });
+
+// Clic droit sur la scène = ouvrir le menu système (comme le vrai jeu).
+canvas.addEventListener("contextmenu", (ev) => {
+  ev.preventDefault();
+  if (anyOverlayOpen()) return;
+  uiSound("CANCEL");
+  openSysMenu();
+});
+
+// ---- Galerie d'assets décoratifs (OTHCG / SYSCG / PARTS / EVENTCG…) --------
+const GAL_PER_PAGE = 60;
+let _galPak = null, _galPage = 0;
+
+function galleryOpen() { return document.querySelector("#gallery")?.classList.contains("show"); }
+function galleryViewOpen() { return document.querySelector("#gallery-view")?.classList.contains("show"); }
+
+function openGallery() {
+  const el = document.querySelector("#gallery");
+  const tabs = document.querySelector("#gallery-tabs");
+  const grid = document.querySelector("#gallery-grid");
+  if (!el || !tabs || !grid) return;
+  game._clearAutoTimer?.();
+  const paks = game.galleryPaks ? game.galleryPaks() : [];
+  tabs.innerHTML = "";
+  if (!paks.length) {
+    grid.innerHTML = '<div style="color:#8a93a8; padding:30px;">Aucun PAK décoratif chargé (OTHCG/SYSCG/PARTS…).</div>';
+    document.querySelector("#gallery-pager").innerHTML = "";
+    el.classList.add("show");
+    return;
+  }
+  if (!_galPak || !paks.some((p) => p.name === _galPak)) { _galPak = paks[0].name; _galPage = 0; }
+  for (const p of paks) {
+    const b = document.createElement("button");
+    b.className = "gal-tab";
+    b.dataset.pak = p.name;
+    b.textContent = `${p.base} (${p.count})`;
+    b.addEventListener("click", () => { uiSound("CURSOR"); _galPak = p.name; _galPage = 0; buildGallery(); });
+    tabs.appendChild(b);
+  }
+  buildGallery();
+  el.classList.add("show");
+}
+
+let _galGen = 0; // jeton de génération : invalide le décodage en cours si on change d'onglet/page
+function buildGallery() {
+  const grid = document.querySelector("#gallery-grid");
+  const pager = document.querySelector("#gallery-pager");
+  if (!grid) return;
+  const gen = ++_galGen;
+  const pak = _galPak; // capturé localement (l'onglet peut changer pendant le décodage)
+  document.querySelectorAll("#gallery-tabs .gal-tab").forEach((b) => b.classList.toggle("active", b.dataset.pak === pak));
+  const entries = game.galleryEntries ? game.galleryEntries(pak) : [];
+  const pages = Math.max(1, Math.ceil(entries.length / GAL_PER_PAGE));
+  if (_galPage >= pages) _galPage = 0;
+  const first = _galPage * GAL_PER_PAGE;
+  const slice = entries.slice(first, first + GAL_PER_PAGE);
+
+  // 1) crée d'abord toutes les cellules (placeholders) -> affichage instantané
+  grid.innerHTML = "";
+  const cells = slice.map((e) => {
+    const cell = document.createElement("div");
+    cell.className = "gal-cell"; cell.style.cursor = "default";
+    const thumb = document.createElement("div");
+    thumb.className = "gal-thumb";
+    thumb.innerHTML = '<span style="color:#5b6478; font-size:12px;">…</span>';
+    const cap = document.createElement("div");
+    cap.className = "gal-cap";
+    cap.textContent = e.name || `#${e.index}`;
+    cell.append(thumb, cap);
+    grid.appendChild(cell);
+    return { e, cell, thumb, cap };
+  });
+
+  // 2) pagination (immédiate)
+  pager.innerHTML = "";
+  if (pages > 1) {
+    for (let p = 0; p < pages; p++) {
+      const b = document.createElement("button");
+      b.textContent = String(p + 1);
+      if (p === _galPage) b.classList.add("active");
+      b.addEventListener("click", () => { uiSound("PAGE"); _galPage = p; buildGallery(); grid.scrollTop = 0; });
+      pager.appendChild(b);
+    }
+  }
+
+  // 3) décodage progressif : vignette réduite, en rendant la main au navigateur
+  //    entre chaque image (plus de gel), annulable si on change d'onglet/page.
+  (async () => {
+    for (const { e, cell, thumb, cap } of cells) {
+      if (gen !== _galGen) return;
+      const got = game.galleryImage ? game.galleryImage(pak, e.index, 180) : null;
+      if (gen !== _galGen) return;
+      if (got) {
+        const im = document.createElement("img");
+        im.src = got.url;
+        thumb.innerHTML = ""; thumb.appendChild(im);
+        cap.title = `${e.name || "#" + e.index} — ${got.w}×${got.h}`;
+        cell.style.cursor = "pointer";
+        cell.addEventListener("click", () => {
+          uiSound("ENTER");
+          const full = game.galleryImage(pak, e.index); // plein résolution à la demande
+          openGalleryView((full || got).url, `${e.name || "#" + e.index}  ·  ${got.w}×${got.h}  ·  ${pak}`);
+        });
+      } else {
+        thumb.innerHTML = '<span style="color:#5b6478; font-size:12px;">non décodable</span>';
+      }
+      await new Promise((r) => setTimeout(r, 0)); // laisse respirer le navigateur
+    }
+  })();
+}
+
+function openGalleryView(url, caption) {
+  const v = document.querySelector("#gallery-view");
+  if (!v) return;
+  v.querySelector("img").src = url;
+  v.querySelector(".gv-cap").textContent = caption || "";
+  v.classList.add("show");
+}
+function closeGalleryView() { const v = document.querySelector("#gallery-view"); if (v) { v.classList.remove("show"); const im = v.querySelector("img"); if (im) im.src = ""; } }
+function closeGallery() { document.querySelector("#gallery")?.classList.remove("show"); closeGalleryView(); }
+document.querySelector("#gallery-close")?.addEventListener("click", () => { uiSound("CANCEL"); closeGallery(); });
+document.querySelector("#gallery-view")?.addEventListener("click", () => { uiSound("CANCEL"); closeGalleryView(); });
+
+// ---- Plein écran -----------------------------------------------------------
+function toggleFullscreen() {
+  try {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+    else document.exitFullscreen?.();
+  } catch (e) { console.warn("Plein écran indisponible:", e.message); }
+}
+
+// ---- Aide / manuel (raccourcis clavier & souris) ---------------------------
+function helpOpen() { return document.querySelector("#help")?.classList.contains("show"); }
+function openHelp() { document.querySelector("#help")?.classList.add("show"); }
+function closeHelp() { document.querySelector("#help")?.classList.remove("show"); }
+document.querySelector("#help-close")?.addEventListener("click", () => { uiSound("CANCEL"); closeHelp(); });
+document.querySelector("#help")?.addEventListener("click", (e) => { if (e.target.id === "help") closeHelp(); });
+
+// ---- Indicateur de voix (haut-parleur animé speaker_anim, 6 frames) --------
+let _voiceIndTimer = null;
+function setupVoiceIndicator() {
+  const host = canvas.parentElement || document.body;
+  let el = document.querySelector("#voice-ind");
+  if (!el) {
+    el = document.createElement("img");
+    el.id = "voice-ind"; el.alt = "";
+    el.style.cssText = "position:absolute; left:2.6%; bottom:24%; width:34px; height:34px; z-index:41; display:none; pointer-events:none; filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));";
+    if (getComputedStyle(host).position === "static") host.style.position = "relative";
+    host.appendChild(el);
+  }
+  const frames = (game.sliceStripURLs && game.sliceStripURLs("speaker_anim", 6)) || null;
+  game.onLineVoice = (has) => {
+    if (_voiceIndTimer) { clearInterval(_voiceIndTimer); _voiceIndTimer = null; }
+    if (!has || !frames) { el.style.display = "none"; return; }
+    let i = 0;
+    el.src = frames[0]; el.style.display = "block";
+    _voiceIndTimer = setInterval(() => { i = (i + 1) % frames.length; el.src = frames[i]; }, 110);
+  };
+}
 
 // ---- collecte de fichiers (input dossier / multi / glisser-déposer) --------
 function isPak(name) {
@@ -496,9 +752,15 @@ async function loadAll() {
   // UI : précharge la fenêtre de dialogue (MWIN) et les choix (SELWIN) depuis
   // PARTS.PAK pour un rendu fidèle au jeu original.
   try { await game.loadUiSkin(); } catch (e) { console.warn("UI skin:", e.message); }
-  // Panneau de contrôle in-game + fonds des menus, à partir des vraies images.
-  try { buildControlPanel(); } catch (e) { console.warn("Control panel:", e.message); }
+  // Panneau de contrôle in-game : on garde la barre HTML verticale (Menu/Skip/
+  // Auto/Voice) qui reproduit fidèlement le vrai UI AIR. On N'utilise PAS le
+  // strip horizontal ControlPanel_base du PAK (autre disposition, rendu moche).
+  // buildControlPanel() reste dispo mais n'est plus appelé.
   try { applyMenuSkins(); } catch (e) { console.warn("Menu skins:", e.message); }
+  // Motifs de tremblement d'écran (SHAKELIST_SET du seen "_shakelist").
+  try { game.preloadShakePatterns(); } catch (e) { console.warn("Shake patterns:", e.message); }
+  // Indicateur de voix animé (speaker_anim de PARTS.PAK).
+  try { setupVoiceIndicator(); } catch (e) { console.warn("Voice indicator:", e.message); }
   // VIDÉOS : on scanne les .webm/.mp4/.ogv importés (opening AIR_OP_A/B, etc.).
   // Le VM les jouera sur l'opcode MOVIE. On garde les octets bruts par nom.
   try {
@@ -680,8 +942,8 @@ function wireTitle() {
       uiSound(act === "exit" ? "CANCEL" : "ENTER");
       if (act === "new") { hideTitle(); try { localStorage.removeItem("luck.entry"); } catch {}; playRef(CONFIG.startEntry); }
       else if (act === "load") { hideTitle(); openSaveMenu("load"); }
-      else if (act === "options") { console.log("OPTIONS : config à venir"); }
-      else if (act === "manual") { console.log("MANUAL : manuel à venir"); }
+      else if (act === "options") { openOptions(); }   // ouvre les Options par-dessus le titre
+      else if (act === "manual") { openHelp(); }        // manuel = aide (raccourcis)
       else if (act === "exit") { hideTitle(); showMenu(); } // EXIT -> menu chapitres (debug)
     });
   });
