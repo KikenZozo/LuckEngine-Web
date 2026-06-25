@@ -27,8 +27,9 @@ export class Game {
     this.audio = new AudioManager();
     this.saves = new SaveManager();
     this.movies = new Map(); // nom de fichier -> ArrayBuffer (vidéos opening…)
-    this._history = [];      // backlog : répliques déjà lues (speaker, text, voice)
-
+    this.history = [];      // backlog : répliques passées {name,text,voice} (cf. _pushHistory)
+    this.historyMax = 200;  // nb max de lignes gardées dans le backlog
+    this.shakePatterns = {}; // motifs de tremblement SHAKELIST_SET (id -> [{n,dx,dy}])
     // Logs de debug : silencieux par défaut, activable via game.debug = true
     // ou en ajoutant ?debug à l'URL. Garde la console propre pour le joueur.
     this.debug = (() => {
@@ -285,7 +286,8 @@ export class Game {
     }
     return urls;
   }
-// Découpe une planche en grille cols×rows -> tableau dataURL[row][col]. Sert
+
+  // Découpe une planche en grille cols×rows -> tableau dataURL[row][col]. Sert
   // au menu système (systemmenu = 8 entrées × 3 états : normal/survol/désactivé).
   sliceGridURLs(name, cols, rows) {
     const found = this._imageBytesByName(name);
@@ -320,15 +322,6 @@ export class Game {
     };
   }
 
-  // Historique des répliques (backlog). Renvoie une copie pour l'affichage.
-  getHistory() { return (this._history || []).slice(); }
-  // Rejoue la voix d'une réplique de l'historique (id voix direct VOICE.PAK).
-  replayHistoryVoice(id) {
-    if (!id) return;
-    const rv = this._resolveVoice(id);
-    if (rv) this.audio.playVoice(rv.bytes, rv.from);
-  }
-
   // Rassemble les vraies images d'UI in-game (panneau de contrôle + fond Options)
   // en dataURL, pour que l'interface HTML colle au jeu d'origine. Champs null si
   // PARTS.PAK n'est pas importé (l'UI retombe alors sur les boutons génériques).
@@ -341,6 +334,56 @@ export class Game {
       optionsBg: this.titleImageURL("options_bg"),
       systemBg: this.titleImageURL("system_menu_bg"),
     };
+  }
+
+  // ---- Galerie d'assets décoratifs (OTHCG / SYSCG / PARTS / EVENTCG…) --------
+  // Permet de PARCOURIR et AFFICHER tout ce que contiennent les PAK d'images, y
+  // compris les éléments décoratifs qui ne sont pas posés automatiquement par le
+  // script (médaillons, cadres, logos, plaques de nom, météo…). Fidèle à l'écran
+  // "Album/CG" d'AIR et utile pour identifier les ressources à câbler.
+
+  /** PAK d'images parcourables, avec leur nombre d'entrées (galerie). */
+  galleryPaks() {
+    const want = ["OTHCG", "SYSCG", "SYSCG2", "PARTS", "EVENTCG", "BGCG", "CHARCG"];
+    const out = [];
+    for (const { name, pak } of (this.imagePaks || [])) {
+      const base = name.toUpperCase().replace(/\.PAK$/, "");
+      if (want.includes(base)) out.push({ name, base, count: pak.listEntries().length });
+    }
+    return out;
+  }
+
+  /** Entrées {index,id,name} d'un PAK image donné (par nom de fichier). */
+  galleryEntries(pakName) {
+    const p = (this.imagePaks || []).find((x) => x.name === pakName);
+    if (!p) return [];
+    return p.pak.listEntries().map((e) => ({ index: e.index, id: e.id, name: e.name || "" }));
+  }
+
+  /** Rend une entrée image (par index) en dataURL pour la galerie, ou null si
+   *  l'entrée n'est pas une image CZ décodable. `maxW` > 0 => vignette réduite
+   *  (JPEG léger, rapide, peu de mémoire) ; 0 => plein résolution (PNG, aperçu). */
+  galleryImage(pakName, index, maxW = 0) {
+    const p = (this.imagePaks || []).find((x) => x.name === pakName);
+    if (!p) return null;
+    try {
+      const bytes = p.pak.getEntry(index);
+      if (!(bytes && bytes.length > 2 && bytes[0] === 0x43 && bytes[1] === 0x5a)) return null; // pas du CZ
+      const img = decodeCZ(bytes);
+      if (!img) return null;
+      const full = document.createElement("canvas");
+      full.width = img.width; full.height = img.height;
+      full.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height), 0, 0);
+      let cv = full;
+      if (maxW && img.width > maxW) {
+        const h = Math.max(1, Math.round(img.height * maxW / img.width));
+        cv = document.createElement("canvas");
+        cv.width = maxW; cv.height = h;
+        const c = cv.getContext("2d"); c.imageSmoothingEnabled = true;
+        c.drawImage(full, 0, 0, maxW, h);
+      }
+      return { url: cv.toDataURL(maxW ? "image/jpeg" : "image/png", 0.82), w: img.width, h: img.height };
+    } catch { return null; }
   }
 
   // Bornes (en RATIO 0..1) de la zone non-transparente d'une image RGBA.
@@ -401,6 +444,7 @@ export class Game {
       this._currentBgId = imgId;
       this._currentBgName = null;
       this.sprites = new Map();
+      this.renderer.resetEffects?.(); // écran noir spécial : repart sans effet hérité
       this.eventExprs = [];
       this._inEventCG = false;
       this.bgOverlays = new Map();
@@ -419,10 +463,15 @@ export class Game {
     // jeu il n'est PAS posé comme fond persistant — c'est le MÉDAILLON compact
     // (jul_/aug_) qui s'affiche en haut à gauche. On met donc à jour le médaillon
     // et on N'AFFICHE PAS le carton 1280x720 (sinon il masque toute la scène).
+    // Carton de changement de jour "day_MDD" (ex day_719 = 19 juil) : le script
+    // le charge comme BACKGROUND puis FADE -> HAIKEI_SET (cf. trace seen163), donc
+    // c'est une vraie carte de transition plein écran. On l'AFFICHE (elle sera
+    // remplacée par le décor suivant) ET on met à jour le médaillon de coin pour
+    // les scènes qui suivront. (On ne return plus : l'image suit le flux normal.)
     const dm = /^day_(\d)(\d\d)$/i.exec(found.name || "");
     if (dm) {
       this._updateDateBadge(+dm[1], +dm[2]);
-      return; // ne pas poser le carton comme fond
+      this._isDayCard = imgId; // pour masquer le médaillon redondant sur la carte elle-même
     }
     try {
       const bitmap = typeof createImageBitmap === "function"
@@ -472,7 +521,7 @@ export class Game {
           this.dbg(`EVENTCG expr "${nm}" [${img.width}x${img.height}] off(${img.offsetX || 0},${img.offsetY || 0}) -> empilée (${this.eventExprs.length})`);
         } else {
           // plein cadre -> base (nouvelle scène CG)
-          if (imgId !== this._currentBgId) { this.sprites = new Map(); this._currentBgId = imgId; }
+          if (imgId !== this._currentBgId) { this.sprites = new Map(); this._currentBgId = imgId; this.renderer.resetEffects?.(); }
           this.currentBg = bitmap;
           this._currentBgName = nm;
           this.eventExprs = [];
@@ -494,6 +543,7 @@ export class Game {
         if (imgId !== this._currentBgId) {
           this.sprites = new Map();
           this._currentBgId = imgId;
+          this.renderer.resetEffects?.(); // nouvelle scène : pas d'effet hérité (sépia…)
         }
         this.currentBg = bitmap;
         this._currentBgName = found.name;
@@ -783,6 +833,12 @@ export class Game {
   }
 
   _renderBase() {
+    // Toute recomposition de scène invalide la plume : on stoppe son animation et
+    // on libère sa zone capturée, sinon la boucle ré-estampille l'ancien fond de
+    // fenêtre par-dessus la nouvelle scène (rectangle résiduel quand la boîte
+    // de message a disparu). drawDialogue la recréera si une fenêtre est affichée.
+    this._stopCursorAnim();
+    this.renderer._cursorBox = null;
     this.renderer.clear();
     const cw = this.renderer.canvas.width;
     const ch = this.renderer.canvas.height;
@@ -839,6 +895,9 @@ export class Game {
   _drawDateBadge(cw, ch) {
     const d = this._dateBadge;
     if (!d || this._inEventCG) return;
+    // pas de médaillon de coin par-dessus la carte de jour elle-même (elle affiche
+    // déjà la grande date) ; il réapparaît dès qu'un autre décor devient courant.
+    if (this._isDayCard != null && this._isDayCard === this._currentBgId) return;
     // taille cible ~ 13% de la largeur écran (comme le jeu d'origine), ratio gardé
     const targetW = cw * 0.13;
     const scale = targetW / d.w;
@@ -928,22 +987,27 @@ export class Game {
     });
   }
 
-  // Animation de la plume (curseur "continuer") : cycle les 4 frames + léger
-  // battement vertical sinusoïdal. Ne redessine QUE la zone de la plume.
+  // Animation de la plume (curseur "continuer") : cycle SEULEMENT les 4 frames de
+  // MWIN_CURSOR (qui portent déjà le mouvement). Pas de bob sinusoïdal ajouté
+  // (il se cumulait à l'animation des frames -> rendu erratique). Ne redessine
+  // QUE la zone de la plume (restaure le fond propre puis la frame courante).
   _startCursorAnim() {
     this._stopCursorAnim();
     const r = this.renderer;
     if (!r._cursorBox || !r._cursorBox.clean) return; // pas de plume / pas de fond propre
     const start = performance.now();
+    let lastFrame = -1;
     const loop = (now) => {
       const c = r._cursorBox;
-      if (!c || !c.clean) return;
+      if (!c || !c.clean) { this._cursorRAF = null; return; }
       const t = (now - start) / 1000;
-      const frame = Math.floor(t * 6) % c.frames;       // ~6 fps de cycle de frames
-      const dy = Math.sin(t * 2.6) * 3;                  // battement vertical doux
-      // restaure le fond propre (efface l'ancienne plume sans carré noir)
-      try { r.ctx.putImageData(c.clean, c.cleanX, c.cleanY); } catch {}
-      r._drawCursorFrame(frame, dy);
+      const frame = Math.floor(t * 5) % c.frames;       // ~5 fps, cadence douce
+      // ne repeint que si la frame change (évite scintillement/flou inutile)
+      if (frame !== lastFrame) {
+        lastFrame = frame;
+        try { r.ctx.putImageData(c.clean, c.cleanX, c.cleanY); } catch {}
+        r._drawCursorFrame(frame, 0);
+      }
       this._cursorRAF = requestAnimationFrame(loop);
     };
     this._cursorRAF = requestAnimationFrame(loop);
@@ -972,6 +1036,91 @@ export class Game {
   // Bouton "Voice" : rejoue la voix de la réplique courante.
   replayVoice() {
     if (this._lastVoice) this.audio.playVoice(this._lastVoice.bytes, this._lastVoice.from);
+  }
+
+  // ---- Backlog / historique des répliques -----------------------------------
+  // Enregistre une réplique affichée (locuteur + texte + voix éventuelle) pour
+  // le backlog, comme dans le vrai AIR (molette vers le haut). On dédoublonne la
+  // dernière entrée (re-rendu de la même ligne après changement de langue, etc.).
+  _pushHistory(name, text, voice) {
+    if (!text) return;
+    const last = this.history[this.history.length - 1];
+    if (last && last.text === text && last.name === name) { last.voice = voice || last.voice; return; }
+    this.history.push({ name: name || "", text, voice: voice || null });
+    if (this.history.length > this.historyMax) this.history.shift();
+  }
+
+  /** Renvoie la liste des répliques passées (du plus ancien au plus récent). */
+  getHistory() { return this.history; }
+
+  /** Rejoue la voix d'une entrée du backlog (objet {bytes,from}). */
+  replayHistoryVoice(voice) {
+    if (voice && voice.bytes) this.audio.playVoice(voice.bytes, voice.from);
+  }
+
+  // ---- Effets d'écran pilotés par opcode (shake, filtres couleur, flash) -----
+  // Branché depuis le handler "debug" (catch-all) du VM. BEST EFFORT : faute de
+  // données de test, on applique des défauts SÛRS et TRANSITOIRES. Les filtres
+  // persistants (sépia/négatif) s'effacent à 0 (params nuls) ET au changement de
+  // décor plein écran (cf. _loadBackground) — un filtre ne peut donc pas rester
+  // coincé. Interrupteur global : game.fxEnabled = false (console : fx(false)).
+  _handleFx(ins) {
+    if (this.fxEnabled === false || !this.renderer) return;
+    const r = this.renderer;
+    const u = ins.u16 || [];
+    const off = u.length > 0 && u.every((v) => v === 0); // params tous nuls => désactiver
+    switch (ins.op) {
+      case "QUAKE":          r.shake?.({ amp: 20, duration: 620 }); break;
+      case "SHAKE":
+      case "SHAKELIST":
+      case "SHAKELIST_SET":  r.shake?.({ amp: 13, duration: 440 }); break;
+      case "MCSHAKE":        r.shake?.({ amp: 8,  duration: 360 }); break;
+      case "SEPIA":          off ? r.clearColorFilter?.() : r.setColorFilter?.("sepia(.85) contrast(1.05) brightness(.95)"); break;
+      case "NEGA":           off ? r.clearColorFilter?.() : r.setColorFilter?.("invert(1)"); break;
+      // Vrai tremblement d'écran d'AIR : SHAKELIST joue un motif défini par
+      // SHAKELIST_SET (séquence d'offsets (frames,dx,dy)). cf. preloadShakePatterns.
+      case "SHAKELIST_SET":  this._addShakePattern(ins.u16 || []); break;
+      case "SHAKELIST": {
+        const u = ins.u16 || [];
+        const pid = (u[0] || 0) >> 8;     // index du motif dans l'octet haut (base 0)
+        // les ids SHAKELIST_SET sont en base 1 -> on tente pid+1, puis pid, puis 1.
+        const pat = this.shakePatterns[pid + 1] || this.shakePatterns[pid] || this.shakePatterns[1];
+        if (pat) r.playShake?.(pat);
+        else r.shake?.({ amp: 12, duration: 420 }); // repli si motif inconnu
+        break;
+      }
+      default: break;
+    }
+  }
+
+  // Pré-charge les motifs de tremblement : le jeu les définit via SHAKELIST_SET
+  // dans le seen "_shakelist". On les parse une fois au démarrage pour qu'ils
+  // soient disponibles quel que soit le chemin d'exécution. id -> [{n,dx,dy}].
+  preloadShakePatterns() {
+    try {
+      const e = this._resolveScript("_shakelist");
+      if (!e) return;
+      const codes = parseScript(this.pak.getEntry(e.index));
+      for (const c of codes) {
+        if (c.instruction && c.instruction.op === "SHAKELIST_SET") this._addShakePattern(c.instruction.u16 || []);
+      }
+      this.dbg(`SHAKELIST : ${Object.keys(this.shakePatterns).length} motif(s) chargé(s)`);
+    } catch (err) { console.warn("preloadShakePatterns:", err.message); }
+  }
+
+  // Décode un SHAKELIST_SET : en-tête [id, type, 0, 0] puis des triplets
+  // (frames, dx, dy) signés (dx/dy en px-jeu, négatifs encodés en u16).
+  _addShakePattern(u16) {
+    if (!u16 || u16.length < 4) return;
+    const id = u16[0];
+    const s16 = (v) => (v > 32767 ? v - 65536 : v);
+    const steps = [];
+    for (let i = 4; i + 2 < u16.length; i += 3) {
+      const n = u16[i];
+      if (!n) break;
+      steps.push({ n, dx: s16(u16[i + 1]), dy: s16(u16[i + 2]) });
+    }
+    if (steps.length) this.shakePatterns[id] = steps;
   }
 
   // Joue une vidéo (opening AIR_OP_A/B…) en plein écran par-dessus le canvas,
@@ -1169,7 +1318,6 @@ export class Game {
     this.bgOverlays = new Map();
     this.sprites = new Map();
     this._lastMsgScene = undefined; // pas de fondu sur la 1re réplique d'un seen
-    this._history = [];             // backlog : repart vide à chaque lancement/chargement
     const codes = parseScript(this.pak.getEntry(index));
 
     const vm = new AIRVM(codes, {
@@ -1192,13 +1340,12 @@ export class Game {
           this.audio.stopVoice(); // narration : couper toute voix qui traîne
           this._lastVoice = null;
         }
+        this.onLineVoice?.(!!this._lastVoice); // indicateur de voix (haut-parleur animé)
         const raw = this._pick(ins);
         const m = raw.match(/^@([^@]*)@([\s\S]*)$/);
         const name = m ? m[1] : "";
         const text = m ? m[2] : raw;
-        // Backlog : on archive la réplique (limité aux 300 dernières).
-        this._history.push({ speaker: name, text, voice: ins.unk || 0 });
-        if (this._history.length > 300) this._history.shift();
+        this._pushHistory(name, text, this._lastVoice); // backlog (molette ↑)
         // Point de sauvegarde courant (stable, au niveau d'un MESSAGE) : on
         // mémorise où on en est pour pouvoir reprendre exactement ici.
         this._savePoint = {
@@ -1233,6 +1380,7 @@ export class Game {
         return idx;
       },
       debug: async (ins) => {
+        this._handleFx(ins); // effets d'écran (shake, sépia/négatif…) sur opcode
         // On observe les opcodes sprites non encore décodés pour reverse leur
         // structure depuis les octets réels (comme on a fait pour IMAGELOAD).
         const watch = ["BASE", "FACE", "DISP", "IMAGEUPDATE", "SWAP", "MASK", "PRIORITY", "UVWH", "SIZE", "MANPU"];

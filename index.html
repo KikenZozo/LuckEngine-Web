@@ -45,12 +45,83 @@
     #menubtn { position: fixed; top: 8px; left: 8px; z-index: 6; background: rgba(0,0,0,.55);
       color:#eee; border:1px solid #555; border-radius:4px; padding:4px 10px; cursor:pointer;
       font-family: system-ui, sans-serif; font-size:15px; }
-    .ctrlbtn { background: rgba(15,20,35,.42); color:#eef2fb; border:none; border-radius:6px;
-      padding:7px 11px; cursor:pointer; font-family:'Trebuchet MS', system-ui, sans-serif; font-size:14px;
-      display:flex; align-items:center; gap:6px; transition:background .12s, color .12s; backdrop-filter:blur(2px); }
-    .ctrlbtn .ci { font-size:16px; line-height:1; opacity:.92; }
-    .ctrlbtn:hover { background: rgba(80,120,210,.6); color:#fff; }
-    .ctrlbtn.active { background:#3a5bd0; color:#fff; }
+    .ctrlbtn { background:none; border:none; cursor:pointer;
+      font-family:'Trebuchet MS', system-ui, sans-serif; font-size:18px; line-height:1; letter-spacing:.4px;
+      color:rgba(224,228,238,.82); text-shadow:0 1px 2px rgba(0,0,0,.55);
+      padding:2px 2px; display:flex; align-items:center; gap:9px;
+      transition:color .12s, filter .12s; }
+    .ctrlbtn .ci { display:inline-flex; width:20px; height:20px; align-items:center; justify-content:center; flex:0 0 20px; }
+    .ctrlbtn .ci svg { width:100%; height:100%; display:block; }
+    .ctrlbtn:hover { color:#fff; filter:drop-shadow(0 0 4px rgba(150,190,255,.65)); }
+    .ctrlbtn.active { color:#a8cdff; }
+    /* Backlog / historique des répliques (molette ↑, comme le vrai AIR) */
+    #backlog { position:absolute; inset:0; z-index:78; display:none;
+      background:linear-gradient(180deg, rgba(12,16,26,.93), rgba(16,20,32,.96));
+      font-family:'Trebuchet MS', system-ui, sans-serif; box-sizing:border-box; }
+    #backlog.show { display:flex; flex-direction:column; }
+    #backlog-head { display:flex; align-items:center; gap:14px; padding:18px 34px 10px; }
+    #backlog-head h2 { margin:0; color:#eaeef7; font-size:22px; letter-spacing:3px; }
+    #backlog-close { margin-left:auto; background:rgba(255,255,255,.08); border:1px solid #59617a;
+      color:#dfe5f1; border-radius:6px; padding:6px 16px; cursor:pointer; font-size:15px; }
+    #backlog-close:hover { background:rgba(90,130,220,.35); border-color:#7a9cff; }
+    #backlog-list { flex:1; overflow-y:auto; padding:6px 34px 30px; display:flex; flex-direction:column; gap:2px; }
+    .bl-row { display:flex; gap:12px; align-items:flex-start; padding:10px 12px; border-radius:8px;
+      border-bottom:1px solid rgba(255,255,255,.05); }
+    .bl-row:hover { background:rgba(120,150,220,.10); }
+    .bl-voice { flex:0 0 26px; height:26px; margin-top:1px; border:none; background:none; cursor:pointer;
+      color:#9fb6e8; display:flex; align-items:center; justify-content:center; border-radius:50%; }
+    .bl-voice:hover { color:#fff; background:rgba(120,150,220,.25); }
+    .bl-voice.empty { visibility:hidden; cursor:default; }
+    .bl-text { color:#d9dee9; font-size:17px; line-height:1.5; }
+    .bl-name { color:#ffd27a; font-weight:600; margin-right:8px; }
+    #backlog-empty { color:#8a93a8; text-align:center; margin-top:40px; font-size:16px; }
+    /* Galerie d'assets décoratifs (OTHCG / SYSCG / PARTS / EVENTCG…) */
+    #gallery { position:absolute; inset:0; z-index:79; display:none;
+      background:linear-gradient(180deg, rgba(14,18,28,.96), rgba(18,22,34,.98));
+      font-family:'Trebuchet MS', system-ui, sans-serif; box-sizing:border-box; }
+    #gallery.show { display:flex; flex-direction:column; }
+    #gallery-head { display:flex; align-items:center; gap:10px; padding:16px 30px 8px; flex-wrap:wrap; }
+    #gallery-head h2 { margin:0 18px 0 0; color:#eaeef7; font-size:21px; letter-spacing:3px; }
+    .gal-tab { background:rgba(255,255,255,.06); border:1px solid #4a5470; color:#cfd6e6;
+      border-radius:14px; padding:5px 14px; cursor:pointer; font-size:14px; }
+    .gal-tab:hover { background:rgba(90,130,220,.25); border-color:#7a9cff; }
+    .gal-tab.active { background:#3a5bd0; border-color:#3a5bd0; color:#fff; }
+    #gallery-close { margin-left:auto; background:rgba(255,255,255,.08); border:1px solid #59617a;
+      color:#dfe5f1; border-radius:6px; padding:6px 16px; cursor:pointer; font-size:15px; }
+    #gallery-close:hover { background:rgba(90,130,220,.35); border-color:#7a9cff; }
+    #gallery-grid { flex:1; overflow-y:auto; padding:10px 30px 26px;
+      display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:14px; align-content:start; }
+    .gal-cell { background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:8px;
+      overflow:hidden; cursor:pointer; display:flex; flex-direction:column; }
+    .gal-cell:hover { border-color:#7a9cff; }
+    .gal-thumb { width:100%; height:110px; display:flex; align-items:center; justify-content:center;
+      background:repeating-conic-gradient(#2a2f3e 0% 25%, #232735 0% 50%) 0/18px 18px; }
+    .gal-thumb img { max-width:100%; max-height:110px; object-fit:contain; image-rendering:auto; }
+    .gal-cap { padding:5px 7px; font-size:11px; color:#aeb6c8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #gallery-pager { display:flex; justify-content:center; gap:8px; padding:10px 0 18px; flex-wrap:wrap; }
+    #gallery-pager button { background:rgba(255,255,255,.06); border:1px solid #4a5470; color:#cfd6e6;
+      border-radius:6px; padding:5px 11px; cursor:pointer; font-size:13px; }
+    #gallery-pager button.active { background:#3a5bd0; border-color:#3a5bd0; color:#fff; }
+    /* Visionneuse plein écran d'un asset */
+    #gallery-view { position:absolute; inset:0; z-index:81; display:none; align-items:center; justify-content:center;
+      background:rgba(6,8,14,.92); cursor:zoom-out; }
+    #gallery-view.show { display:flex; }
+    #gallery-view img { max-width:92%; max-height:86%; object-fit:contain; box-shadow:0 6px 40px rgba(0,0,0,.6); }
+    #gallery-view .gv-cap { position:absolute; bottom:18px; left:0; right:0; text-align:center; color:#cfd6e6; font-size:14px; }
+    /* Aide / manuel (raccourcis) */
+    #help { position:absolute; inset:0; z-index:80; display:none; align-items:center; justify-content:center;
+      background:rgba(8,11,18,.9); font-family:'Trebuchet MS', system-ui, sans-serif; }
+    #help.show { display:flex; }
+    #help .panel { background:linear-gradient(180deg, rgba(24,29,42,.98), rgba(18,22,34,.98)); border:1px solid #3a4566;
+      border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,.55);
+      padding:26px 30px; min-width:440px; max-width:560px; color:#dfe5f1; }
+    #help h2 { margin:0 0 16px; font-size:22px; letter-spacing:3px; text-align:center; color:#eaeef7; }
+    #help table { width:100%; border-collapse:collapse; font-size:15px; }
+    #help td { padding:7px 6px; border-bottom:1px solid rgba(255,255,255,.06); vertical-align:top; }
+    #help td.k { white-space:nowrap; color:#a8cdff; font-weight:600; width:42%; }
+    #help-close { margin-top:18px; width:100%; background:rgba(90,130,220,.3); border:1px solid #7a9cff;
+      color:#fff; border-radius:8px; padding:10px; cursor:pointer; font-size:16px; }
+    #help-close:hover { background:rgba(90,130,220,.5); }
     .title-btn { background:none; border:none; cursor:pointer; font-size:30px; font-weight:600;
       color:rgba(110,120,140,.65); letter-spacing:1px; padding:2px 4px; transition:color .12s, text-shadow .12s;
       font-family:'Trebuchet MS', system-ui, sans-serif; }
@@ -93,6 +164,9 @@
       <label style="display:flex; flex-direction:column; gap:6px; font-size:15px;">
         Vitesse lecture auto <input type="range" id="opt-auto" min="1" max="10" value="5" />
       </label>
+      <label style="display:flex; flex-direction:column; gap:6px; font-size:15px;">
+        Opacité fenêtre de texte <input type="range" id="opt-winop" min="20" max="100" value="100" />
+      </label>
       <button id="opt-close" style="background:rgba(90,130,220,.3); border:1px solid #7a9cff; color:#fff; border-radius:8px; padding:10px; cursor:pointer; font-size:16px;">Fermer</button>
     </div>
   </div>
@@ -105,6 +179,7 @@
       <button class="sysmenu-btn" data-act="save">Sauvegarder</button>
       <button class="sysmenu-btn" data-act="load">Charger</button>
       <button class="sysmenu-btn" data-act="options">Options</button>
+      <button class="sysmenu-btn" data-act="gallery">Galerie</button>
       <button class="sysmenu-btn" data-act="title">Retour au titre</button>
     </div>
   </div>
@@ -117,11 +192,47 @@
     </div>
     <div id="save-grid" style="display:grid; grid-template-columns:repeat(4, 1fr); gap:14px;"></div>
   </div>
- <!-- Backlog (historique des répliques) : fond backlog_texture + liste défilante -->
-  <div id="backlog" style="display:none; position:absolute; inset:0; z-index:78; background:#0c1018; font-family:'Trebuchet MS', system-ui, sans-serif;">
-    <div id="backlog-scroll" style="position:absolute; inset:0; overflow-y:auto; padding:64px 13% 90px; box-sizing:border-box;"></div>
-    <button id="backlog-close" style="position:absolute; top:18px; right:26px; background:rgba(20,26,40,.7); border:1px solid #7a9cff; color:#eaf0ff; border-radius:8px; padding:8px 20px; cursor:pointer; font-size:16px;">Fermer ▼</button>
+
+  <!-- Backlog / historique : remonte la molette pour relire les répliques (style AIR) -->
+  <div id="backlog">
+    <div id="backlog-head">
+      <h2>BACKLOG</h2>
+      <button id="backlog-close">Retour</button>
+    </div>
+    <div id="backlog-list"></div>
   </div>
+
+  <!-- Galerie d'assets décoratifs (OTHCG / SYSCG / PARTS / EVENTCG…) -->
+  <div id="gallery">
+    <div id="gallery-head">
+      <h2>GALERIE</h2>
+      <div id="gallery-tabs" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+      <button id="gallery-close">Retour</button>
+    </div>
+    <div id="gallery-grid"></div>
+    <div id="gallery-pager"></div>
+  </div>
+  <div id="gallery-view"><img alt="" /><div class="gv-cap"></div></div>
+
+  <!-- Aide / manuel : raccourcis clavier & souris -->
+  <div id="help">
+    <div class="panel">
+      <h2>COMMANDES</h2>
+      <table>
+        <tr><td class="k">Clic gauche · Espace · Entrée</td><td>Avancer le texte / compléter la frappe</td></tr>
+        <tr><td class="k">Clic droit · Échap</td><td>Menu système</td></tr>
+        <tr><td class="k">Molette ↑ · Page↑ · H</td><td>Backlog (historique des répliques)</td></tr>
+        <tr><td class="k">G</td><td>Galerie d'images</td></tr>
+        <tr><td class="k">Ctrl (maintenu)</td><td>Avance rapide (Skip)</td></tr>
+        <tr><td class="k">A</td><td>Lecture auto</td></tr>
+        <tr><td class="k">V</td><td>Rejouer la voix</td></tr>
+        <tr><td class="k">F</td><td>Plein écran</td></tr>
+        <tr><td class="k">F1 · ?</td><td>Cette aide</td></tr>
+      </table>
+      <button id="help-close">Fermer</button>
+    </div>
+  </div>
+
   <canvas id="game" width="1280" height="720"></canvas>
 
   <!-- Écran titre (style AIR) : fond title1a + boutons NEW GAME / LOAD / … -->
@@ -154,11 +265,11 @@
   </div>
 
   <!-- Barre de contrôle (style proche du vrai jeu : icône + libellé) -->
-  <div id="ctrlbar" style="position:absolute; right:14px; bottom:14px; z-index:40; display:flex; gap:4px; align-items:center;">
-    <button class="ctrlbtn" id="btn-menu2"><span class="ci">&#9881;</span> Menu</button>
-    <button class="ctrlbtn" id="btn-skip"><span class="ci">&#9197;</span> Skip</button>
-    <button class="ctrlbtn" id="btn-auto"><span class="ci">&#8635;</span> Auto</button>
-    <button class="ctrlbtn" id="btn-voice"><span class="ci">&#128266;</span> Voice</button>
+  <div id="ctrlbar" style="position:absolute; right:18px; bottom:12px; z-index:40; display:flex; flex-direction:column; align-items:flex-start; gap:6px;">
+    <button class="ctrlbtn" id="btn-menu2"><span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="12" cy="12" r="3.3"/><path d="M12 2.4l1.2 2a8 8 0 0 1 1.9.8l2.3-.6 1.4 2.4-1.6 1.7c.1.5.1 1.1 0 1.6l1.6 1.7-1.4 2.4-2.3-.6a8 8 0 0 1-1.9.8L12 21.6l-1.2-2a8 8 0 0 1-1.9-.8l-2.3.6-1.4-2.4 1.6-1.7a8 8 0 0 1 0-1.6L4.8 9.6l1.4-2.4 2.3.6a8 8 0 0 1 1.9-.8L12 2.4z"/></svg></span> Menu</button>
+    <button class="ctrlbtn" id="btn-skip"><span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><path d="M5 6l6 6-6 6V6z"/><path d="M13 6l6 6-6 6V6z"/></svg></span> Skip</button>
+    <button class="ctrlbtn" id="btn-auto"><span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.6 4.2V8h-3.8"/></svg></span> Auto</button>
+    <button class="ctrlbtn" id="btn-voice"><span class="ci"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.3v5.4h3.4L12 18.6V5.4L7.4 9.3H4z"/><path d="M15.4 9a3.6 3.6 0 0 1 0 6"/><path d="M17.9 6.4a7 7 0 0 1 0 11.2"/></svg></span> Voice</button>
   </div>
 
   <div id="import">
