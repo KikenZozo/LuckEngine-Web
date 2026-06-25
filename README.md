@@ -456,7 +456,7 @@ Les parties portées ou adaptées depuis LuckSystem restent soumises à leurs no
 
 ### LuckEngine-Web
 
-- Conception du portage web, intégration JavaScript, tests navigateur, reverse-engineering pratique : **Enzo Bouarab / @enzo.bouarab1**.
+- Conception du portage web, intégration JavaScript, tests navigateur, reverse-engineering pratique : KikenZozo.
 - Assistance de développement et de documentation : outils IA utilisés ponctuellement pour structurer, déboguer et documenter le projet. La responsabilité du dépôt publié reste celle du mainteneur.
 
 ### LuckSystem / LucaSystem tools
