@@ -287,6 +287,41 @@ export class Game {
     return urls;
   }
 
+  // Découpe une planche en grille cols×rows -> tableau dataURL[row][col]. Sert
+  // au menu système (systemmenu = 8 entrées × 3 états : normal/survol/désactivé).
+  sliceGridURLs(name, cols, rows) {
+    const found = this._imageBytesByName(name);
+    if (!found) return null;
+    const img = decodeCZ(found.bytes);
+    if (!img) return null;
+    const full = document.createElement("canvas");
+    full.width = img.width; full.height = img.height;
+    full.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height), 0, 0);
+    const cw = img.width / cols, ch = img.height / rows;
+    const grid = [];
+    for (let r = 0; r < rows; r++) {
+      const row = [];
+      for (let c = 0; c < cols; c++) {
+        const cv = document.createElement("canvas");
+        cv.width = Math.round(cw); cv.height = Math.round(ch);
+        cv.getContext("2d").drawImage(full, c * cw, r * ch, cw, ch, 0, 0, Math.round(cw), Math.round(ch));
+        row.push(cv.toDataURL("image/png"));
+      }
+      grid.push(row);
+    }
+    return grid;
+  }
+
+  // Assets du menu système graphique : fond + planche d'entrées (8 entrées,
+  // états normal/survol/désactivé) telle que livrée par le patch FR.
+  getSystemMenuAssets() {
+    return {
+      bg: this.titleImageURL("system_menu_bg"),
+      items: this.sliceGridURLs("systemmenu", 8, 3),
+      backlog: this.titleImageURL("backlog_texture"),
+    };
+  }
+
   // Rassemble les vraies images d'UI in-game (panneau de contrôle + fond Options)
   // en dataURL, pour que l'interface HTML colle au jeu d'origine. Champs null si
   // PARTS.PAK n'est pas importé (l'UI retombe alors sur les boutons génériques).

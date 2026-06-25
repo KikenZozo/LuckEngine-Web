@@ -288,6 +288,7 @@ function wireHoverSound(el, name = "CURSOR") {
 function openSysMenu() {
   const el = document.querySelector("#sysmenu");
   if (el) el.style.display = "block";
+  refreshSysMenuDisabled();
 }
 function closeSysMenu() {
   const el = document.querySelector("#sysmenu");
@@ -311,6 +312,80 @@ function wireSysMenu() {
   });
 }
 wireSysMenu();
+
+// ---- Menu système GRAPHIQUE (planche systemmenu : 8 entrées × 3 états) ------
+// Remplace le menu HTML par les vraies images du jeu quand `systemmenu` existe
+// (sinon buildSystemMenu retombe sur le menu HTML câblé ci-dessus). Fusionné
+// depuis la branche main ; l'action "manual" pointe vers l'aide (openHelp).
+let _sysAssets = null;
+const SYS_ACTS = ["save", "load", "options", "title", "qsave", "qload", "manual", "quit"];
+function flashEl(b) { try { b.animate([{ filter: "brightness(2.4)" }, { filter: "brightness(1)" }], { duration: 380 }); } catch {} }
+function toast(msg) {
+  let t = document.querySelector("#toast");
+  if (!t) { t = document.createElement("div"); t.id = "toast"; t.style.cssText = "position:absolute; left:50%; bottom:80px; transform:translateX(-50%); z-index:90; background:rgba(15,20,32,.92); color:#eaf0ff; padding:10px 20px; border-radius:10px; font-family:'Trebuchet MS',system-ui,sans-serif; font-size:15px; box-shadow:0 3px 14px rgba(0,0,0,.5);"; document.body.appendChild(t); }
+  t.textContent = msg; t.style.display = "block";
+  clearTimeout(t._h); t._h = setTimeout(() => { t.style.display = "none"; }, 1800);
+}
+function sysItemImg(b, state) { if (_sysAssets?.items) b.style.backgroundImage = `url(${_sysAssets.items[state][+b.dataset.i]})`; }
+
+function buildSystemMenu() {
+  _sysAssets = game.getSystemMenuAssets();
+  const sys = document.querySelector("#sysmenu");
+  if (!sys || !_sysAssets.items) return; // pas de systemmenu -> on garde le menu HTML
+  const cols = 4, cellW = 212, cellH = 184, gap = 12;
+  sys.innerHTML = "";
+  sys.style.background = _sysAssets.bg ? `#0c1018 url(${_sysAssets.bg}) center/cover no-repeat` : "rgba(12,16,24,.92)";
+  const grid = document.createElement("div");
+  grid.id = "sysgrid";
+  grid.style.cssText = `position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); display:grid; grid-template-columns:repeat(${cols},${cellW}px); gap:${gap}px;`;
+  SYS_ACTS.forEach((act, i) => {
+    const b = document.createElement("button");
+    b.className = "sysmenu-item"; b.dataset.act = act; b.dataset.i = i;
+    b.style.cssText = `width:${cellW}px; height:${cellH}px; border:0; padding:0; cursor:pointer; background:transparent url(${_sysAssets.items[0][i]}) no-repeat center/contain; transition:transform .08s;`;
+    grid.appendChild(b);
+  });
+  sys.appendChild(grid);
+  // clic en dehors des entrées (sur le fond) = reprendre (ferme le menu)
+  sys.addEventListener("click", (e) => { if (e.target === sys) { uiSound("CANCEL"); closeSysMenu(); } });
+  wireSystemMenu();
+}
+
+// Grise CHARGER (pas de save) et CHANGEMENT RAPIDE (pas de sauvegarde rapide).
+async function refreshSysMenuDisabled() {
+  const grid = document.querySelector("#sysgrid");
+  if (!grid) return;
+  let hasSaves = false, hasQuick = false;
+  try { hasSaves = (await game.listSaves()).some((s) => /^\d+$/.test(String(s.slot))); } catch {}
+  try { hasQuick = await game.hasQuickSave(); } catch {}
+  grid.querySelectorAll(".sysmenu-item").forEach((b) => {
+    const a = b.dataset.act;
+    const dis = (a === "load" && !hasSaves) || (a === "qload" && !hasQuick);
+    b.dataset.disabled = dis ? "1" : "";
+    sysItemImg(b, dis ? 2 : 0);
+    b.style.cursor = dis ? "default" : "pointer";
+  });
+}
+
+function wireSystemMenu() {
+  document.querySelectorAll("#sysgrid .sysmenu-item").forEach((b) => {
+    const a = b.dataset.act;
+    b.addEventListener("mouseenter", () => { if (b.dataset.disabled) return; uiSound("CURSOR"); sysItemImg(b, 1); b.style.transform = "scale(1.05)"; });
+    b.addEventListener("mouseleave", () => { b.style.transform = "scale(1)"; sysItemImg(b, b.dataset.disabled ? 2 : 0); });
+    b.addEventListener("click", async () => {
+      game.audio?.resume();
+      if (b.dataset.disabled) { uiSound("INVALID"); return; }
+      uiSound(a === "title" || a === "quit" ? "CANCEL" : "ENTER");
+      if (a === "save") { closeSysMenu(); openSaveMenu("save"); }
+      else if (a === "load") { closeSysMenu(); openSaveMenu("load"); }
+      else if (a === "options") { closeSysMenu(); openOptions(); }
+      else if (a === "title") { closeSysMenu(); try { localStorage.removeItem("luck.entry"); } catch {}; showTitle(); }
+      else if (a === "qsave") { try { await game.quickSave(); flashEl(b); toast("Sauvegarde rapide effectuée"); } catch (e) { uiSound("INVALID"); } refreshSysMenuDisabled(); }
+      else if (a === "qload") { if (await game.hasQuickSave()) { closeSysMenu(); try { await game.quickLoad(); } catch (e) {} } else uiSound("INVALID"); }
+      else if (a === "manual") { closeSysMenu(); openHelp(); }
+      else if (a === "quit") { closeSysMenu(); } // « Quitter » = ferme le menu (navigateur)
+    });
+  });
+}
 
 // Applique les volumes (et vitesse auto) mémorisés en localStorage à l'audio.
 function applySavedVolumes() {
@@ -757,6 +832,8 @@ async function loadAll() {
   // strip horizontal ControlPanel_base du PAK (autre disposition, rendu moche).
   // buildControlPanel() reste dispo mais n'est plus appelé.
   try { applyMenuSkins(); } catch (e) { console.warn("Menu skins:", e.message); }
+  // Menu système graphique (planche systemmenu) — remplace le menu HTML si présent.
+  try { buildSystemMenu(); } catch (e) { console.warn("System menu:", e.message); }
   // Motifs de tremblement d'écran (SHAKELIST_SET du seen "_shakelist").
   try { game.preloadShakePatterns(); } catch (e) { console.warn("Shake patterns:", e.message); }
   // Indicateur de voix animé (speaker_anim de PARTS.PAK).
@@ -949,5 +1026,5 @@ function wireTitle() {
   });
 }
 
-console.log("LuckEngine-Web boot v3.18 — panneau de contrôle ControlPanel_*, menus skinés, fondus de scène");
+console.log("LuckEngine-Web boot v3.20 — backlog, galerie, shake SHAKELIST, indicateur voix, cartons de jour, menu système graphique");
 boot();
