@@ -322,6 +322,52 @@ export class Game {
     };
   }
 
+  // Menu titre graphique : vraie planche `title_menu` (2 rangées empilées : état
+  // normal en haut, surbrillance en bas). On découpe les 2 rangées en dataURL et
+  // on DÉTECTE les bornes de chaque entrée (largeurs variables) en scannant l'alpha
+  // de la rangée du haut — les petits écarts (espaces internes des mots) sont
+  // fusionnés, les grands écarts séparent les entrées. Renvoie null si absente.
+  getTitleMenu() {
+    const found = this._imageBytesByName("title_menu");
+    if (!found) return null;
+    const img = decodeCZ(found.bytes);
+    if (!img) return null;
+    // 3 rangées empilées (normal / survol / désactivé), comme la planche systemmenu.
+    const W = img.width, H = img.height, rowH = Math.floor(H / 3);
+    const full = document.createElement("canvas");
+    full.width = W; full.height = H;
+    full.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(img.rgba), W, H), 0, 0);
+    const rowURL = (y0) => {
+      const c = document.createElement("canvas");
+      c.width = W; c.height = rowH;
+      c.getContext("2d").drawImage(full, 0, y0, W, rowH, 0, 0, W, rowH);
+      return c.toDataURL("image/png");
+    };
+    // colonnes « encrées » de la rangée du haut (au moins un pixel opaque)
+    const rgba = img.rgba;
+    const ink = new Array(W).fill(false);
+    for (let x = 0; x < W; x++) {
+      for (let y = 0; y < rowH; y++) {
+        if (rgba[(y * W + x) * 4 + 3] > 40) { ink[x] = true; break; }
+      }
+    }
+    const mergeGap = Math.round(W * 0.014); // fusionne les espaces internes des mots
+    const items = [];
+    let x = 0;
+    while (x < W) {
+      if (!ink[x]) { x++; continue; }
+      const start = x; let end = x;
+      while (x < W) {
+        if (ink[x]) { end = x; x++; continue; }
+        let g = x; while (g < W && !ink[g]) g++;          // taille de l'écart vide
+        if (g < W && g - x <= mergeGap) { x = g; }          // petit écart -> même entrée
+        else break;
+      }
+      items.push({ x0: start / W, x1: (end + 1) / W });
+    }
+    return { normal: rowURL(0), active: rowURL(rowH), items, ratio: W / rowH };
+  }
+
   // Rassemble les vraies images d'UI in-game (panneau de contrôle + fond Options)
   // en dataURL, pour que l'interface HTML colle au jeu d'origine. Champs null si
   // PARTS.PAK n'est pas importé (l'UI retombe alors sur les boutons génériques).
@@ -1587,6 +1633,20 @@ export class Game {
     try {
       return this.renderer.canvas.toDataURL("image/jpeg", 0.85);
     } catch { return null; }
+  }
+
+  // Convertit une dataURL (image de reprise capturée au save) en élément Image
+  // dessinable comme fond. SANS cette méthode, charger une sauvegarde laissait un
+  // écran noir avec le seul texte jusqu'au prochain décor : l'appel échouait
+  // silencieusement et currentBg restait nul. C'est ici qu'on rétablit la reprise.
+  _dataURLToBitmap(dataURL) {
+    return new Promise((resolve) => {
+      if (!dataURL) { resolve(null); return; }
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = dataURL;
+    });
   }
 
   // Sauvegarde l'état courant (dernier MESSAGE) dans un slot.

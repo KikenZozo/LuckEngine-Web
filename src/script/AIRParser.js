@@ -123,14 +123,21 @@ export function parseAIRInstruction(code) {
         };
 
       case "LOG_BEGIN": {
-        // Texte narratif de cinématique (ex intro "My child…"). Même structure
-        // de chaînes que MESSAGE : un u16 puis jp / en / zh.
-        const unk = r.readUint16();
+        // Narration de cinématique (ex intro « Mon enfant… »). En-tête de 3 OCTETS
+        // (cf. AIR.py : read_uint8 ×3), et NON un uint16 : l'ancien décalage d'un
+        // octet vidait toute la narration (jp/en/zh lus vides). De plus, les slots
+        // de traduction sont en UTF-16 (≠ MESSAGE qui les a en UTF-8). On retient
+        // la 1re traduction non vide (le texte FR du patch).
+        const a = r.readUint8(); r.readUint8(); r.readUint8();
         const jp = r.readLenStringUTF16LE();
-        const out = { op, unk, jp, text: jp };
-        if (jp.length > 0 && r.canRead(2)) {
-          out.en = r.readLenStringUTF8();
-          if (r.canRead(2)) out.zh = r.readLenStringUTF16LE();
+        const out = { op, unk: a, jp, text: jp };
+        if (jp.length > 0) {
+          let tr = "";
+          for (let i = 0; i < 2 && r.canRead(2); i++) {
+            const s = r.readLenStringUTF16LE();
+            if (!tr && s) tr = s;
+          }
+          if (tr) out.en = tr;
         }
         if (r.remaining() > 0) out.tail = [...r.readBytes(r.remaining())];
         return out;
