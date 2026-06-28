@@ -122,11 +122,14 @@
     #help-close { margin-top:18px; width:100%; background:rgba(90,130,220,.3); border:1px solid #7a9cff;
       color:#fff; border-radius:8px; padding:10px; cursor:pointer; font-size:16px; }
     #help-close:hover { background:rgba(90,130,220,.5); }
-    .title-btn { background:none; border:none; cursor:pointer; font-size:30px; font-weight:600;
-      color:rgba(110,120,140,.65); letter-spacing:1px; padding:2px 4px; transition:color .12s, text-shadow .12s;
+    .title-btn { background:none; border:none; cursor:pointer; font-size:30px; font-weight:500;
+      color:rgba(108,118,140,.7); letter-spacing:2px; padding:2px 4px; transition:color .12s, text-shadow .12s;
       font-family:'Trebuchet MS', system-ui, sans-serif; }
     .title-btn:hover { color:#2f50c8; text-shadow:0 0 8px rgba(90,130,255,.5); }
     .title-btn:disabled { color:rgba(110,120,140,.30); cursor:default; text-shadow:none; }
+    .title-arrow { background:none; border:none; cursor:pointer; color:#3a5bd0; font-size:30px;
+      line-height:1; padding:2px 6px; transition:color .12s, text-shadow .12s; }
+    .title-arrow:hover { color:#2f50c8; text-shadow:0 0 8px rgba(90,130,255,.5); }
     .sysmenu-btn { background:rgba(255,255,255,.08); border:1px solid #59617a; color:#dfe5f1;
       border-radius:8px; padding:12px 20px; cursor:pointer; font-size:17px; letter-spacing:.5px;
       font-family:'Trebuchet MS', system-ui, sans-serif; transition:background .12s, border-color .12s; }
@@ -238,13 +241,22 @@
   <!-- Écran titre (style AIR) : fond title1a + boutons NEW GAME / LOAD / … -->
   <div id="title" style="display:none; position:absolute; inset:0; z-index:70; background:#f2f2f4;">
     <img id="title-bg" alt="" style="position:absolute; left:0; top:0; width:100%; height:100%; object-fit:contain;" />
-    <div id="title-menu" style="position:absolute; left:0; right:0; bottom:11%; display:flex; justify-content:center; gap:42px; align-items:center; font-family:'Trebuchet MS', system-ui, sans-serif;">
-      <button class="title-btn" data-act="new">NEW GAME</button>
-      <button class="title-btn" data-act="load">LOAD</button>
-      <button class="title-btn" data-act="options">OPTIONS</button>
-      <button class="title-btn" data-act="manual">MANUAL</button>
-      <button class="title-btn" data-act="exit">EXIT</button>
-      <span id="title-arrow" style="color:#3a5bd0; font-size:32px;">&#9654;</span>
+    <div id="title-menu" style="position:absolute; left:0; right:0; bottom:11%; display:flex; justify-content:center; align-items:center; font-family:'Trebuchet MS', system-ui, sans-serif;">
+      <!-- Page 1 (comme l'original) : NEW GAME / LOAD / OPTIONS / MANUAL / EXIT + flèche -->
+      <div class="title-page" data-page="1" style="display:flex; gap:42px; align-items:center;">
+        <button class="title-btn" data-act="new">NEW GAME</button>
+        <button class="title-btn" data-act="load">LOAD</button>
+        <button class="title-btn" data-act="options">OPTIONS</button>
+        <button class="title-btn" data-act="manual">MANUAL</button>
+        <button class="title-btn" data-act="exit">EXIT</button>
+        <button class="title-arrow" data-act="next" aria-label="Suivant">&#9654;</button>
+      </div>
+      <!-- Page 2 : flèche retour + GALLERY / MUSIC -->
+      <div class="title-page" data-page="2" style="display:none; gap:42px; align-items:center;">
+        <button class="title-arrow" data-act="prev" aria-label="Retour">&#9664;</button>
+        <button class="title-btn" data-act="gallery">GALLERY</button>
+        <button class="title-btn" data-act="music">MUSIC</button>
+      </div>
     </div>
   </div>
 

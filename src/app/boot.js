@@ -1006,7 +1006,7 @@ async function showTitle() {
     const url = game.titleImageURL("title1a");
     if (url) bg.src = url;
   }
-  buildTitleMenu(); // menu graphique (vraie planche title_menu) si disponible
+  showTitlePage(1); // toujours repartir sur la 1re page du menu
   // au 1er lancement (aucune sauvegarde), LOAD est grisé
   let hasSave = false;
   try { hasSave = (await game.listSaves()).length > 0; } catch {}
@@ -1018,71 +1018,33 @@ function hideTitle() {
   const el = document.querySelector("#title");
   if (el) el.style.display = "none";
 }
+// Menu titre comme l'original (anglais) : 2 pages basculées par la flèche.
+//  Page 1 : NEW GAME · LOAD · OPTIONS · MANUAL · EXIT · ▶
+//  Page 2 : ◀ · GALLERY · MUSIC
+function showTitlePage(n) {
+  document.querySelectorAll("#title-menu .title-page").forEach((p) => {
+    p.style.display = (p.dataset.page === String(n)) ? "flex" : "none";
+  });
+}
 function wireTitle() {
-  document.querySelectorAll(".title-btn").forEach((b) => {
+  document.querySelectorAll("#title-menu .title-btn, #title-menu .title-arrow").forEach((b) => {
     wireHoverSound(b);
     b.addEventListener("click", () => {
       game.audio?.resume();
       const act = b.dataset.act;
+      if (act === "next") { uiSound("CURSOR"); showTitlePage(2); return; }
+      if (act === "prev") { uiSound("CANCEL"); showTitlePage(1); return; }
       uiSound(act === "exit" ? "CANCEL" : "ENTER");
       if (act === "new") { hideTitle(); try { localStorage.removeItem("luck.entry"); } catch {}; playRef(CONFIG.startEntry); }
       else if (act === "load") { hideTitle(); openSaveMenu("load"); }
-      else if (act === "options") { openOptions(); }   // ouvre les Options par-dessus le titre
-      else if (act === "manual") { openHelp(); }        // manuel = aide (raccourcis)
-      else if (act === "exit") { hideTitle(); showMenu(); } // EXIT -> menu chapitres (debug)
+      else if (act === "options") { openOptions(); }   // Options par-dessus le titre
+      else if (act === "manual") { openHelp(); }        // Manual = aide (raccourcis)
+      else if (act === "gallery") { hideTitle(); openGallery(); }
+      else if (act === "music") { hideTitle(); openGallery(); } // pas de salle musique dédiée : galerie
+      else if (act === "exit") { try { window.close(); } catch {} toast("Close the tab to exit."); }
     });
   });
 }
 
-// ---- Menu titre GRAPHIQUE (vraie planche title_menu, patch FR) -------------
-// Ordre des entrées de la planche : NOUVELLE PARTIE, SÉLECTION HISTOIRE,
-// COMMENCER "AIR", CHARGER, OPTIONS, MANUEL, QUITTER, GALLERIE, MUSIQUE.
-let _titleMenuBuilt = false;
-const TITLE_ACTS = ["new", "story", "air", "load", "options", "manual", "quit", "gallery", "music"];
-function buildTitleMenu() {
-  if (_titleMenuBuilt) return true;
-  const tm = game.getTitleMenu && game.getTitleMenu();
-  if (!tm || !tm.items || tm.items.length < 5) return false; // repli : boutons HTML
-  const host = document.querySelector("#title-menu");
-  if (!host) return false;
-  host.innerHTML = "";
-  host.style.cssText = "position:absolute; left:50%; bottom:8%; transform:translateX(-50%); width:80%;";
-  const wrap = document.createElement("div");
-  wrap.style.cssText = `position:relative; width:100%; aspect-ratio:${tm.ratio} / 1; background:url(${tm.normal}) no-repeat center/100% 100%; filter:drop-shadow(0 2px 4px rgba(0,0,0,.35));`;
-  const hi = document.createElement("div");
-  hi.id = "title-hi";
-  hi.style.cssText = `position:absolute; inset:0; background:url(${tm.active}) no-repeat center/100% 100%; opacity:0; pointer-events:none; transition:opacity .08s;`;
-  wrap.appendChild(hi);
-  tm.items.forEach((it, i) => {
-    const b = document.createElement("button");
-    b.className = "tm-hot"; b.dataset.act = TITLE_ACTS[i] || ("item" + i); b.dataset.i = i;
-    b.style.cssText = `position:absolute; top:0; height:100%; left:${(it.x0 * 100).toFixed(2)}%; width:${((it.x1 - it.x0) * 100).toFixed(2)}%; background:none; border:0; padding:0; cursor:pointer;`;
-    b.addEventListener("mouseenter", () => {
-      uiSound("CURSOR");
-      hi.style.clipPath = `inset(0 ${((1 - it.x1) * 100).toFixed(2)}% 0 ${(it.x0 * 100).toFixed(2)}%)`;
-      hi.style.opacity = "1";
-    });
-    b.addEventListener("mouseleave", () => { hi.style.opacity = "0"; });
-    b.addEventListener("click", () => titleAction(b.dataset.act));
-    wrap.appendChild(b);
-  });
-  host.appendChild(wrap);
-  _titleMenuBuilt = true;
-  return true;
-}
-
-function titleAction(act) {
-  game.audio?.resume();
-  uiSound(act === "quit" ? "CANCEL" : "ENTER");
-  if (act === "new") { hideTitle(); try { localStorage.removeItem("luck.entry"); } catch {}; playRef(CONFIG.startEntry); }
-  else if (act === "story" || act === "air") { hideTitle(); showMenu(); } // sélection de scène propre
-  else if (act === "load") { hideTitle(); openSaveMenu("load"); }
-  else if (act === "options") { openOptions(); }
-  else if (act === "manual") { openHelp(); }
-  else if (act === "gallery") { hideTitle(); openGallery(); }
-  else if (act === "music") { hideTitle(); openGallery(); toast("Salle de musique : via la galerie pour l'instant"); }
-  else if (act === "quit") { toast("Ferme l'onglet pour quitter."); try { window.close(); } catch {} }
-}
-
-console.log("LuckEngine-Web boot v3.21 — menu titre graphique (title_menu FR), reprise visuelle au chargement, Chapitres masqué (Ctrl+Maj+C)");
+console.log("LuckEngine-Web boot v3.22 — menu titre anglais 2 pages (comme l'original), carton de date FR retiré");
 boot();

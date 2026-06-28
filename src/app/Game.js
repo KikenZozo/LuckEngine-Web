@@ -202,6 +202,10 @@ export class Game {
   // médaillons OTHCG sont nommés jul_16..jul_31 et aug_01..aug_31 (universels,
   // pas de variante de langue). Petits (≈192x200), positionnés en overlay.
   async _updateDateBadge(month, day) {
+    // Carton/médaillon de date DÉSACTIVÉ : l'image du patch affiche le mois en
+    // français (« JUILLET »…), jugé inutile. On n'affiche plus aucune date.
+    return;
+    // eslint-disable-next-line no-unreachable
     const mm = month === 8 ? "aug" : month === 7 ? "jul" : null;
     if (!mm) { return; } // hors juillet/août : pas de médaillon connu
     const name = `${mm}_${String(day).padStart(2, "0")}`;
