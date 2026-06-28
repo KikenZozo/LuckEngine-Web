@@ -1595,21 +1595,39 @@ export class Game {
       vm.restoreState(this._pendingRestore);
       this._pendingRestore = null;
     }
-    // Recharger le décor de la sauvegarde pour que la 1re réplique s'affiche
-    // sur le bon fond (sinon écran vide jusqu'au prochain IMAGELOAD).
-    if (this._pendingScreen) {
-      // image de reprise plein écran (scène complète capturée au save) : on
-      // l'affiche comme fond jusqu'à ce que le script recompose naturellement.
+    // Reprise du décor de la sauvegarde. On RECHARGE le vrai BGCG par son id (et,
+    // à défaut, par son nom) : c'est l'image réelle décodée, donc jamais un fond
+    // noir. La capture d'écran ne sert plus que de repli ultime si aucun décor
+    // n'est identifiable. (Avant, on privilégiait la capture, qui pouvait rester
+    // noire — d'où l'écran noir au chargement.)
+    let bgRestored = false;
+    if (this._pendingBgId != null) {
+      try { await this._loadBackground(this._pendingBgId); bgRestored = !!this.currentBg; } catch {}
+    }
+    if (!bgRestored && this._pendingBgName) {
+      try {
+        const found = this._imageBytesByName(this._pendingBgName);
+        if (found) {
+          const img = decodeCZ(found.bytes);
+          if (img && img.width >= 1000) {
+            this.currentBg = typeof createImageBitmap === "function"
+              ? await createImageBitmap(new ImageData(new Uint8ClampedArray(img.rgba), img.width, img.height))
+              : { rgba: img.rgba, width: img.width, height: img.height };
+            this._currentBgName = this._pendingBgName;
+            bgRestored = true;
+          }
+        }
+      } catch {}
+    }
+    if (!bgRestored && this._pendingScreen) {
       try {
         const bmp = await this._dataURLToBitmap(this._pendingScreen);
         if (bmp) { this.currentBg = bmp; this._currentBgId = null; }
       } catch {}
-      this._pendingScreen = null;
-      this._pendingBgId = null;
-    } else if (this._pendingBgId != null) {
-      try { await this._loadBackground(this._pendingBgId); } catch {}
-      this._pendingBgId = null;
     }
+    this._pendingScreen = null;
+    this._pendingBgId = null;
+    this._pendingBgName = null;
 
     await vm.run();
     this.renderer.clear();
@@ -1670,8 +1688,9 @@ export class Game {
     const record = {
       state: this._savePoint.state,
       vars: { ...this.vars },
-      bgId: this._savePoint.bgId,
-      screen,   // image plein écran de reprise
+      bgId: this._currentBgId != null ? this._currentBgId : this._savePoint.bgId, // dernier BGCG affiché
+      bgName: this._currentBgName || null,
+      screen,   // image plein écran de reprise (repli)
       thumb,
       meta: {
         speaker: this._savePoint.speaker || "",
@@ -1693,7 +1712,8 @@ export class Game {
     this._pendingRestore = rec.state;
     this._pendingVars = { ...(rec.vars || {}) };
     this._pendingBgId = rec.bgId || null;
-    this._pendingScreen = rec.screen || null;  // image de reprise plein écran
+    this._pendingBgName = rec.bgName || null;     // nom du dernier BGCG (repli si l'id échoue)
+    this._pendingScreen = rec.screen || null;     // capture plein écran (repli ultime)
     await this.playEntry(rec.state.scriptName);
   }
 

@@ -1046,5 +1046,5 @@ function wireTitle() {
   });
 }
 
-console.log("LuckEngine-Web boot v3.22 — menu titre anglais 2 pages (comme l'original), carton de date FR retiré");
+console.log("LuckEngine-Web boot v3.23 — chargement : rechargement du vrai BGCG (plus d'écran noir)");
 boot();
