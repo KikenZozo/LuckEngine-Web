@@ -314,7 +314,7 @@ function wireSysMenu() {
       else if (act === "load") openSaveMenu("load");
       else if (act === "options") openOptions();
       else if (act === "gallery") openGallery();
-      else if (act === "title") { try { localStorage.removeItem("luck.entry"); } catch {}; showTitle(); }
+      else if (act === "title") { try { localStorage.removeItem("luck.entry"); } catch {}; game.clearAutoSave(); showTitle(); }
     });
   });
 }
@@ -385,7 +385,7 @@ function wireSystemMenu() {
       if (a === "save") { closeSysMenu(); openSaveMenu("save"); }
       else if (a === "load") { closeSysMenu(); openSaveMenu("load"); }
       else if (a === "options") { closeSysMenu(); openOptions(); }
-      else if (a === "title") { closeSysMenu(); try { localStorage.removeItem("luck.entry"); } catch {}; showTitle(); }
+      else if (a === "title") { closeSysMenu(); try { localStorage.removeItem("luck.entry"); } catch {}; game.clearAutoSave(); showTitle(); }
       else if (a === "qsave") { try { await game.quickSave(); flashEl(b); toast("Sauvegarde rapide effectuée"); } catch (e) { uiSound("INVALID"); } refreshSysMenuDisabled(); }
       else if (a === "qload") { if (await game.hasQuickSave()) { closeSysMenu(); try { await game.quickLoad(); } catch (e) {} } else uiSound("INVALID"); }
       else if (a === "manual") { closeSysMenu(); openHelp(); }
@@ -490,6 +490,7 @@ async function openSaveMenu(mode = "save") {
         if (!rec) { uiSound("INVALID"); return; }
         uiSound("ENTER");
         closeSaveMenu();
+        hideTitle(); // on entre dans le jeu : masque le titre s'il était derrière (chargement depuis le titre)
         try { await game.loadFromSlot(i); } catch (e) { console.warn("Load:", e.message); }
       }
     });
@@ -987,7 +988,13 @@ async function boot() {
   try {
     if (await store.hasGame(CONFIG.scriptPak)) {
       await loadAll();
-      showTitle(); // écran titre (NEW GAME / LOAD / …) comme le vrai jeu
+      // Reprise après rafraîchissement : si un autosave existe, on retourne
+      // directement où le joueur en était au lieu de l'écran titre.
+      let resumed = false;
+      try {
+        if (await game.hasAutoSave()) { await game.autoLoad(); resumed = true; }
+      } catch (e) { console.warn("Reprise auto échouée :", e.message); }
+      if (!resumed) showTitle(); // écran titre (NEW GAME / LOAD / …) comme le vrai jeu
     } else {
       overlay.classList.add("show"); // 1re fois -> import
     }
@@ -1035,12 +1042,12 @@ function wireTitle() {
       if (act === "next") { uiSound("CURSOR"); showTitlePage(2); return; }
       if (act === "prev") { uiSound("CANCEL"); showTitlePage(1); return; }
       uiSound(act === "exit" ? "CANCEL" : "ENTER");
-      if (act === "new") { hideTitle(); try { localStorage.removeItem("luck.entry"); } catch {}; playRef(CONFIG.startEntry); }
-      else if (act === "load") { hideTitle(); openSaveMenu("load"); }
+      if (act === "new") { hideTitle(); try { localStorage.removeItem("luck.entry"); } catch {}; game.clearAutoSave(); playRef(CONFIG.startEntry); }
+      else if (act === "load") { openSaveMenu("load"); }   // par-dessus le titre : il réapparaît à la fermeture
       else if (act === "options") { openOptions(); }   // Options par-dessus le titre
       else if (act === "manual") { openHelp(); }        // Manual = aide (raccourcis)
-      else if (act === "gallery") { hideTitle(); openGallery(); }
-      else if (act === "music") { hideTitle(); openGallery(); } // pas de salle musique dédiée : galerie
+      else if (act === "gallery") { openGallery(); }    // par-dessus le titre : il réapparaît à la fermeture
+      else if (act === "music") { openGallery(); } // pas de salle musique dédiée : galerie
       else if (act === "exit") { try { window.close(); } catch {} toast("Close the tab to exit."); }
     });
   });

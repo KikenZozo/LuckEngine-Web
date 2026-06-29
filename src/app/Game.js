@@ -820,6 +820,8 @@ export class Game {
   _redraw() {
     if (!this._cur) return;
     if (this._cur.type === "message") {
+      // Carton de jour : pas de texte par-dessus (cf. handler MESSAGE).
+      if (this._isDayCard != null && this._isDayCard === this._currentBgId) { this._renderBase(); return; }
       const raw = this._pick(this._cur.ins);
       const m = raw.match(/^@([^@]*)@([\s\S]*)$/);
       this._renderBase();
@@ -1404,6 +1406,9 @@ export class Game {
           preview: (text || "").slice(0, 60),
           bgId: this._currentBgId,   // pour restaurer le décor au chargement
         };
+        // Autosave silencieux : on mémorise ce point à chaque réplique pour pouvoir
+        // reprendre exactement ici si le joueur rafraîchit la page (cf. autoSave).
+        this.autoSave();
         // Fondu enchaîné automatique quand le DÉCOR a changé depuis la dernière
         // réplique (transition douce entre scènes, comme le jeu original). Pas de
         // fondu en mode Skip (instantané) ni sur la toute 1re réplique.
@@ -1412,7 +1417,17 @@ export class Game {
         this._lastMsgScene = sceneKey;
         if (sceneChanged && !this.skipMode) await this._fadeTransition();
         else this._renderBase();
-        await this._typewrite(name, text); // frappe progressive (clic = complète)
+        // Cartons de changement de jour (day_MDD) : l'image porte déjà la date,
+        // on N'AFFICHE AUCUN texte traduit par-dessus. On laisse juste avancer au
+        // clic. (L'intro du début passe par la narration LOG_BEGIN, pas par ici,
+        // elle garde donc sa traduction.)
+        const onDayCard = this._isDayCard != null && this._isDayCard === this._currentBgId;
+        if (onDayCard) {
+          this._stopReveal();
+          this._reveal = { done: true }; // rien à révéler : avance immédiate au clic
+        } else {
+          await this._typewrite(name, text); // frappe progressive (clic = complète)
+        }
         await this._waitAdvance();         // puis attend le clic pour avancer
       },
       select: async (ins) => {
@@ -1730,4 +1745,38 @@ export class Game {
     await this.loadFromSlot("quick");
     return true;
   }
+
+  // ---- Autosave (reprise après rafraîchissement de page) -------------------
+  // Slot dédié "auto", réécrit à CHAQUE message depuis _savePoint. Volontairement
+  // LÉGER : pas de capture d'écran (toDataURL coûteux à chaque réplique) — au
+  // chargement, le décor est de toute façon rechargé par son id/nom BGCG. Appelé
+  // sans await dans le handler de MESSAGE : ne doit jamais casser le fil du jeu.
+  async autoSave() {
+    if (!this._savePoint) return;
+    const record = {
+      state: this._savePoint.state,
+      vars: { ...this.vars },
+      bgId: this._currentBgId != null ? this._currentBgId : this._savePoint.bgId,
+      bgName: this._currentBgName || null,
+      screen: null,
+      thumb: null,
+      meta: {
+        speaker: this._savePoint.speaker || "",
+        preview: this._savePoint.preview || "",
+        seen: this._savePoint.state.scriptName,
+        date: new Date().toLocaleString(),
+        lang: this.lang,
+        auto: true,
+      },
+    };
+    try { await this.saves.put("auto", record); } catch {}
+  }
+  async hasAutoSave() { return !!(await this.saves.get("auto")); }
+  async autoLoad() {
+    const rec = await this.saves.get("auto");
+    if (!rec) return false;
+    await this.loadFromSlot("auto");
+    return true;
+  }
+  async clearAutoSave() { try { await this.saves.remove("auto"); } catch {} }
 }
